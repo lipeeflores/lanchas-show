@@ -479,9 +479,9 @@ const SearchResults = ({ boats, searchParams }: { boats: any[]; searchParams: Se
               transition={{ duration: 0.5, delay: index * 0.1 }}
               className="group bg-slate-800/40 border border-slate-700/50 rounded-2xl overflow-hidden hover:bg-slate-800/60 hover:border-yellow-500/30 transition-all duration-500 flex flex-col backdrop-blur-sm"
             >
-              <div
-                className="relative h-64 overflow-hidden cursor-pointer"
-                onClick={() => images.length > 0 && setLightbox({ boatName: boat.name, images, index: 0 })}
+              <Link
+                to={`/lancha/${boat.id}`}
+                className="relative h-64 overflow-hidden cursor-pointer block"
               >
                 <div className="absolute inset-0 bg-slate-900/20 group-hover:bg-transparent transition-colors z-10"></div>
                 <img 
@@ -499,10 +499,12 @@ const SearchResults = ({ boats, searchParams }: { boats: any[]; searchParams: Se
                     <Camera className="w-3 h-3" /> {images.length} fotos
                   </div>
                 )}
-              </div>
+              </Link>
               
               <div className="p-6 flex flex-col flex-grow">
-                <h3 className="text-2xl font-serif font-bold text-white mb-4 group-hover:text-yellow-400 transition-colors">{boat.name}</h3>
+                <Link to={`/lancha/${boat.id}`}>
+                  <h3 className="text-2xl font-serif font-bold text-white mb-4 group-hover:text-yellow-400 transition-colors">{boat.name}</h3>
+                </Link>
                 
                 <div className="flex items-center gap-4 mb-4 text-gray-400 text-sm">
                   <div className="flex items-center gap-1.5">

@@ -10,12 +10,14 @@ import CustomersDB from './pages/admin/CustomersDB';
 import AICommandCenter from './pages/admin/AICommandCenter';
 import CalendarSettings from './pages/admin/CalendarSettings';
 import AdminGuard from './components/AdminGuard';
+import BoatDetails from './pages/BoatDetails';
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Home />} />
+        <Route path="/lancha/:id" element={<BoatDetails />} />
         <Route path="/admin" element={<Login />} />
         <Route path="/admin/dashboard" element={<AdminGuard><Dashboard /></AdminGuard>} />
         <Route path="/admin/reservas" element={<AdminGuard><ReservationsMap /></AdminGuard>} />
