@@ -28,6 +28,16 @@ export default function FleetManagement() {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Accounts Payable State
+  const [isPayableModalOpen, setIsPayableModalOpen] = useState(false);
+  const [payableFormData, setPayableFormData] = useState({
+    description: '',
+    amount: 0,
+    payee_type: 'PARTNER' as 'PARTNER' | 'EXTERNAL',
+    partner_id: '',
+    status: 'PENDING'
+  });
+
   const handleFileUpload = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     setUploading(true);
@@ -72,9 +82,9 @@ export default function FleetManagement() {
     setFormData({ ...formData, [field]: newTags });
   };
 
-  useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
+  const fetchData = async () => {
+    setLoading(true);
+    try {
       // Fetch boats + partners + expenses
       const { data: boatsData } = await supabase
         .from('boats')
@@ -91,10 +101,14 @@ export default function FleetManagement() {
 
       const { data: partnersData } = await supabase.from('partners').select('id, name');
       if (partnersData) setAllPartners(partnersData);
-      
+    } catch (error: any) {
+      console.error('Error fetching data:', error.message);
+    } finally {
       setLoading(false);
-    };
+    }
+  };
 
+  useEffect(() => {
     fetchData();
   }, []);
 
@@ -149,6 +163,78 @@ export default function FleetManagement() {
 
   const removeRoute = (idx: number) => {
     setBoatRoutes(boatRoutes.filter((_, i) => i !== idx));
+  };
+
+  const handleDeleteBoat = async () => {
+    if (!editingBoatId) return;
+    
+    const confirmDelete = window.confirm('Tem certeza que deseja excluir esta lancha? Esta ação é irreversível e excluirá todos os dados relacionados (preços, despesas e reservas).');
+    if (!confirmDelete) return;
+
+    setSaving(true);
+    try {
+      // 1. Delete dependent data
+      await supabase.from('boat_routes_pricing').delete().eq('boat_id', editingBoatId);
+      await supabase.from('boat_expenses').delete().eq('boat_id', editingBoatId);
+      await supabase.from('reservations').delete().eq('boat_id', editingBoatId);
+      
+      // 2. Delete the boat
+      const { error } = await supabase.from('boats').delete().eq('id', editingBoatId);
+      if (error) throw error;
+
+      setIsModalOpen(false);
+      fetchData();
+    } catch (error: any) {
+      console.error('Error deleting boat:', error);
+      alert('Erro ao excluir embarcação: ' + (error.message || 'Erro desconhecido'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleMarkAsPaid = async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('accounts_payable')
+        .update({ status: 'PAID' })
+        .eq('id', id);
+      if (error) throw error;
+      fetchData();
+    } catch (error: any) {
+      alert('Erro ao dar baixa: ' + error.message);
+    }
+  };
+
+  const handleDeletePayable = async (id: string) => {
+    if (!window.confirm('Excluir esta conta?')) return;
+    try {
+      const { error } = await supabase
+        .from('accounts_payable')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+      fetchData();
+    } catch (error: any) {
+      alert('Erro ao excluir: ' + error.message);
+    }
+  };
+
+  const handleSavePayable = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const payload = {
+        ...payableFormData,
+        partner_id: payableFormData.payee_type === 'PARTNER' ? payableFormData.partner_id : null
+      };
+      const { error } = await supabase
+        .from('accounts_payable')
+        .insert([payload]);
+      if (error) throw error;
+      setIsPayableModalOpen(false);
+      fetchData();
+    } catch (error: any) {
+      alert('Erro ao salvar conta: ' + error.message);
+    }
   };
 
   const handleSaveBoat = async (e: React.FormEvent) => {
@@ -212,7 +298,7 @@ export default function FleetManagement() {
       }
 
       setIsModalOpen(false);
-      window.location.reload();
+      fetchData();
     } catch (error: any) {
       console.error('Error saving boat:', error);
       alert('Erro ao salvar embarcação: ' + (error.message || 'Erro desconhecido'));
@@ -430,8 +516,14 @@ export default function FleetManagement() {
                   <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl overflow-hidden">
                     <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
                         <h2 className="text-lg font-bold text-white flex items-center gap-2">Repasses Pendentes e Contas</h2>
-                        <button className="bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold px-4 py-2 rounded-lg border border-slate-700 transition-colors">
-                            + Lançar Avulso
+                        <button 
+                           onClick={() => {
+                             setPayableFormData({ description: '', amount: 0, payee_type: 'EXTERNAL', partner_id: '', status: 'PENDING' });
+                             setIsPayableModalOpen(true);
+                           }}
+                           className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 text-xs font-bold px-4 py-2 rounded-lg transition-colors shadow-[0_0_15px_rgba(234,179,8,0.2)]"
+                         >
+                             + Lançar Avulso
                         </button>
                     </div>
                     
@@ -476,13 +568,23 @@ export default function FleetManagement() {
                                                 </span>
                                             )}
                                         </td>
-                                        <td className="p-4 text-right">
-                                            {pay.status === 'PENDING' && (
-                                                <button className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors">
-                                                    Dar Baixa
-                                                </button>
-                                            )}
-                                        </td>
+                                        <td className="p-4 text-right flex items-center justify-end gap-2">
+                                             {pay.status === 'PENDING' && (
+                                                 <button 
+                                                   onClick={() => handleMarkAsPaid(pay.id)}
+                                                   className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors"
+                                                 >
+                                                     Dar Baixa
+                                                 </button>
+                                             )}
+                                             <button 
+                                               onClick={() => handleDeletePayable(pay.id)}
+                                               className="p-1.5 text-gray-500 hover:text-red-500 transition-colors"
+                                               title="Excluir"
+                                             >
+                                               <Trash2 className="w-4 h-4" />
+                                             </button>
+                                         </td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -780,10 +882,22 @@ export default function FleetManagement() {
                       </div>
                   </div>
 
-                  <div className="pt-6 flex justify-end gap-4 border-t border-slate-800 mt-6 sticky bottom-0 bg-slate-900 pb-6">
-                     <button type="button" onClick={() => setIsModalOpen(false)} className="px-6 py-3 rounded-xl border border-slate-700 text-gray-300 font-bold hover:bg-slate-800 transition-colors">
-                        Cancelar
-                     </button>
+                  <div className="pt-6 flex justify-between items-center gap-4 border-t border-slate-800 mt-6 sticky bottom-0 bg-slate-900 pb-6">
+                     <div className="flex gap-4">
+                       {editingBoatId && (
+                         <button 
+                           type="button" 
+                           onClick={handleDeleteBoat} 
+                           disabled={saving}
+                           className="px-4 py-3 rounded-xl border border-red-500/30 text-red-500 font-bold hover:bg-red-500/10 transition-colors flex items-center gap-2 disabled:opacity-50"
+                         >
+                           <Trash2 className="w-5 h-5" /> Excluir
+                         </button>
+                       )}
+                       <button type="button" onClick={() => setIsModalOpen(false)} className="px-6 py-3 rounded-xl border border-slate-700 text-gray-300 font-bold hover:bg-slate-800 transition-colors">
+                          Cancelar
+                       </button>
+                     </div>
                       <button type="submit" disabled={saving || uploading} className="px-6 py-3 rounded-xl bg-yellow-500 hover:bg-yellow-400 text-slate-900 font-bold shadow-[0_0_15px_rgba(234,179,8,0.3)] transition-all flex items-center gap-2 disabled:opacity-50">
                         {saving ? (
                           <><Loader2 className="w-5 h-5 animate-spin" /> Salvando...</>
@@ -791,6 +905,84 @@ export default function FleetManagement() {
                           <><Save className="w-5 h-5"/> Salvar Lancha</>
                         )}
                       </button>
+                  </div>
+               </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Contas a Pagar */}
+        {isPayableModalOpen && (
+          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+               <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+                  <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                    <Wallet className="w-5 h-5 text-yellow-500" />
+                    Lançar Conta Avulsa
+                  </h2>
+                  <button onClick={() => setIsPayableModalOpen(false)} className="text-gray-500 hover:text-white transition-colors">
+                     <X className="w-6 h-6"/>
+                  </button>
+               </div>
+               
+               <form onSubmit={handleSavePayable} className="p-6 space-y-4">
+                  <div>
+                    <label className="text-xs text-gray-500 uppercase font-bold">Descrição</label>
+                    <input 
+                      type="text" 
+                      required 
+                      value={payableFormData.description} 
+                      onChange={e => setPayableFormData({...payableFormData, description: e.target.value})} 
+                      placeholder="Ex: Manutenção Elétrica, Limpeza..."
+                      className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:border-yellow-500 outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-gray-500 uppercase font-bold">Valor (R$)</label>
+                    <input 
+                      type="number" 
+                      required 
+                      value={payableFormData.amount} 
+                      onChange={e => setPayableFormData({...payableFormData, amount: Number(e.target.value)})} 
+                      className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:border-yellow-500 outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-gray-500 uppercase font-bold">Favorecido</label>
+                    <select 
+                      value={payableFormData.payee_type} 
+                      onChange={e => setPayableFormData({...payableFormData, payee_type: e.target.value as any})}
+                      className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:border-yellow-500 outline-none"
+                    >
+                      <option value="EXTERNAL">Fornecedor Externo</option>
+                      <option value="PARTNER">Parceiro/Dono</option>
+                    </select>
+                  </div>
+
+                  {payableFormData.payee_type === 'PARTNER' && (
+                    <div>
+                      <label className="text-xs text-gray-500 uppercase font-bold">Selecionar Parceiro</label>
+                      <select 
+                        required
+                        value={payableFormData.partner_id} 
+                        onChange={e => setPayableFormData({...payableFormData, partner_id: e.target.value})}
+                        className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:border-yellow-500 outline-none"
+                      >
+                        <option value="">Selecione...</option>
+                        {allPartners.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    </div>
+                  )}
+
+                  <div className="pt-4 flex justify-end gap-3">
+                    <button type="button" onClick={() => setIsPayableModalOpen(false)} className="px-4 py-2 text-gray-400 font-bold hover:text-white transition-colors">
+                      Cancelar
+                    </button>
+                    <button type="submit" className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 font-bold px-6 py-2 rounded-lg transition-colors">
+                      Salvar Conta
+                    </button>
                   </div>
                </form>
             </div>

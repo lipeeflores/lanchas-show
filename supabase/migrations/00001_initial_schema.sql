@@ -56,8 +56,29 @@ CREATE TABLE IF NOT EXISTS public.reservations (
     floating_mat_value DECIMAL(10,2) DEFAULT 0.00,
     extra_hours_qty INT DEFAULT 0,
     extra_hours_total_value DECIMAL(10,2) DEFAULT 0.00,
-    total_reservation_value DECIMAL(10,2) DEFAULT 0.00
+    total_reservation_value DECIMAL(10,2) DEFAULT 0.00,
+    passenger_count INT DEFAULT 1,
+    boarding_point TEXT,
+    destination TEXT,
+    negotiation_status TEXT DEFAULT 'PROSPECTING',
+    last_interaction_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+    payment_link_url TEXT,
+    contract_link_url TEXT
 );
+
+-- View for n8n Catalog
+CREATE OR REPLACE VIEW public.vw_boats_catalog_n8n AS
+SELECT 
+    id,
+    name,
+    capacity,
+    daily_rate as base_price_brl,
+    owner_type,
+    status,
+    'https://lanchas-show.vercel.app/lancha/' || id AS catalog_link
+FROM public.boats
+WHERE status = 'AVAILABLE';
+
 
 -- Consumptions (Items consumed or extra services like Laundry/Minibar)
 CREATE TABLE IF NOT EXISTS public.consumptions (
