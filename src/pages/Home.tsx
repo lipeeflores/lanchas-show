@@ -365,9 +365,12 @@ const About = () => {
             className="order-2 lg:order-1 relative h-[500px] rounded-3xl overflow-hidden border border-slate-800 shadow-2xl group"
           >
             <div className="absolute inset-0 bg-slate-900/20 group-hover:bg-transparent transition-colors z-10 pointer-events-none"></div>
-            <img 
-              src="https://images.unsplash.com/photo-1567899378494-47b22a2ae96a?auto=format&fit=crop&q=80&w=1000" 
-              alt="Lancha de luxo em alto mar" 
+            <video 
+              src="/🎬_PROMPT_VERSÃO_CINEMA_PRO.mp4" 
+              autoPlay 
+              loop 
+              muted 
+              playsInline
               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
             />
             <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent to-transparent z-10"></div>
@@ -700,14 +703,14 @@ const Location = () => {
 
 const Gallery = () => {
   const images = [
-    "https://images.unsplash.com/photo-1544551763-46a013bb70d5?auto=format&fit=crop&q=80&w=800",
-    "https://images.unsplash.com/photo-1590845947698-8924d7409b56?auto=format&fit=crop&q=80&w=800",
-    "https://images.unsplash.com/photo-1505228395891-9a51e7e86bf6?auto=format&fit=crop&q=80&w=800",
-    "https://images.unsplash.com/photo-1519046904884-53103b34b206?auto=format&fit=crop&q=80&w=800",
-    "https://images.unsplash.com/photo-1534008897995-27a23e859048?auto=format&fit=crop&q=80&w=800",
-    "https://images.unsplash.com/photo-1520255870062-bd79d3865de7?auto=format&fit=crop&q=80&w=800",
-    "https://images.unsplash.com/photo-1569263979104-865ab7cd8d13?auto=format&fit=crop&q=80&w=800",
-    "https://images.unsplash.com/photo-1605281317010-fe5ffe798166?auto=format&fit=crop&q=80&w=800",
+    { src: "/galeria-de-fotos/caixa-d-aco-festa.png", position: "object-center" },
+    { src: "/galeria-de-fotos/caixa-d-aco.png", position: "object-center" },
+    { src: "/galeria-de-fotos/caixa-d-aco-2.png", position: "object-center" },
+    { src: "/galeria-de-fotos/gemini.png", position: "object-center" },
+    { src: "/galeria-de-fotos/whatsapp-1.jpeg", position: "object-center" },
+    { src: "/galeria-de-fotos/whatsapp-2.jpeg", position: "object-center" },
+    { src: "/galeria-de-fotos/whatsapp-3.jpeg", position: "object-bottom" },
+    { src: "/galeria-de-fotos/helicoptero.jpeg", position: "object-center" },
   ];
 
   return (
@@ -726,7 +729,7 @@ const Gallery = () => {
         </motion.div>
 
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-          {images.map((src, index) => (
+          {images.map((item, index) => (
             <motion.div
               key={index}
               initial={{ opacity: 0, scale: 0.9 }}
@@ -736,9 +739,9 @@ const Gallery = () => {
               className="relative group overflow-hidden rounded-xl aspect-square cursor-pointer"
             >
               <img 
-                src={src} 
+                src={item.src} 
                 alt={`Galeria Lanchas Show ${index + 1}`} 
-                className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                className={`w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 ${item.position}`}
               />
               <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">
                 <Camera className="w-8 h-8 text-white opacity-70" />
@@ -930,6 +933,7 @@ export default function Home() {
   const [allBoats, setAllBoats] = useState<any[]>([]);
   const [filteredBoats, setFilteredBoats] = useState<any[]>([]);
   const [routes, setRoutes] = useState<any[]>([]);
+  const [reservations, setReservations] = useState<any[]>([]);
   const [searchParams, setSearchParams] = useState<SearchParams>({
     local: '', destino: '', data: null, passageiros: 0, hasSearched: false
   });
@@ -941,6 +945,9 @@ export default function Home() {
 
       const { data: routesData } = await supabase.from('boat_routes_pricing').select('*');
       if (routesData) setRoutes(routesData);
+      
+      const { data: resData } = await supabase.from('reservations').select('boat_id, start_date, end_date, status').not('status', 'in', '("CANCELLED","NO_SHOW")');
+      if (resData) setReservations(resData);
     };
     fetchData();
   }, []);
@@ -962,31 +969,45 @@ export default function Home() {
   const handleSearch = () => {
     let results = [...allBoats];
 
-    // Filter by routes if embark/dest selected
+    // 1. Filter by routes if embark/dest selected
     if (searchParams.local || searchParams.destino) {
-      const matchingBoatIds = routes
-        .filter(r => {
-          if (searchParams.local && r.embarkation_point !== searchParams.local) return false;
-          if (searchParams.destino && r.destination_point !== searchParams.destino) return false;
-          return true;
-        })
-        .map(r => r.boat_id);
-      
-      if (matchingBoatIds.length > 0) {
-        results = results.filter(b => matchingBoatIds.includes(b.id));
-      } else {
-        // Fallback to boat's own boarding_points/destinations for boats without route pricing
-        results = results.filter(b => {
+      results = results.filter(b => {
+        // Se a lancha tiver rotas especificadas em boat_routes_pricing, ela precisa dar match nelas
+        const hasRoutePricing = routes.some(r => r.boat_id === b.id);
+        
+        if (hasRoutePricing) {
+          return routes.some(r => 
+            r.boat_id === b.id &&
+            (!searchParams.local || r.embarkation_point === searchParams.local) &&
+            (!searchParams.destino || r.destination_point === searchParams.destino)
+          );
+        } else {
+          // Fallback para embarcações sem rotas precificadas específicas
           const matchEmb = !searchParams.local || (b.boarding_points || []).includes(searchParams.local);
           const matchDest = !searchParams.destino || (b.allowed_destinations || []).includes(searchParams.destino);
           return matchEmb && matchDest;
-        });
-      }
+        }
+      });
     }
 
-    // Filter by capacity
+    // 2. Filter by capacity
     if (searchParams.passageiros > 0) {
       results = results.filter(b => b.capacity >= searchParams.passageiros);
+    }
+
+    // 3. Filter by availability (Date)
+    if (searchParams.data) {
+      const searchDateStr = searchParams.data.getFullYear() + '-' + 
+                            String(searchParams.data.getMonth() + 1).padStart(2, '0') + '-' + 
+                            String(searchParams.data.getDate()).padStart(2, '0');
+      
+      const bookedBoatIds = reservations.filter(res => {
+        const resStart = res.start_date ? res.start_date.substring(0, 10) : '';
+        const resEnd = res.end_date ? res.end_date.substring(0, 10) : '';
+        return searchDateStr >= resStart && searchDateStr <= resEnd;
+      }).map(res => res.boat_id);
+
+      results = results.filter(b => !bookedBoatIds.includes(b.id));
     }
 
     setFilteredBoats(results);
