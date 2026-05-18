@@ -366,7 +366,7 @@ const About = () => {
           >
             <div className="absolute inset-0 bg-slate-900/20 group-hover:bg-transparent transition-colors z-10 pointer-events-none"></div>
             <video 
-              src="/🎬_PROMPT_VERSÃO_CINEMA_PRO.mp4" 
+              src="/video-hero.mp4" 
               autoPlay 
               loop 
               muted 
@@ -941,10 +941,41 @@ export default function Home() {
   useEffect(() => {
     const fetchData = async () => {
       const { data: boatsData } = await supabase.from('boats').select('*').order('created_at');
-      if (boatsData) { setAllBoats(boatsData); setFilteredBoats(boatsData); }
+      let finalBoats = boatsData || [];
 
       const { data: routesData } = await supabase.from('boat_routes_pricing').select('*');
-      if (routesData) setRoutes(routesData);
+      let finalRoutes = routesData || [];
+
+      // Fallback in case the database is completely empty or offline
+      if (finalBoats.length === 0) {
+        finalBoats = [
+          {
+            id: 'mock-1', name: 'Tecnomarine 50', capacity: 15, size: 50,
+            image: '/galeria-de-fotos/caixa-d-aco.png',
+            image_urls: ['/galeria-de-fotos/caixa-d-aco.png', '/galeria-de-fotos/caixa-d-aco-2.png'],
+            boarding_points: ['Porto Belo', 'Balneário Camboriú'],
+            allowed_destinations: ["Caixa d'Aço", 'Praia da Sepultura'],
+            has_floating_mat: true, include_captain: true, include_fuel: true, owner_type: 'OWN'
+          },
+          {
+            id: 'mock-2', name: 'Schaefer 365', capacity: 12, size: 36,
+            image: '/galeria-de-fotos/caixa-d-aco-festa.png',
+            image_urls: ['/galeria-de-fotos/caixa-d-aco-festa.png'],
+            boarding_points: ['Porto Belo'],
+            allowed_destinations: ["Caixa d'Aço"],
+            has_floating_mat: false, include_captain: true, include_fuel: true, owner_type: 'PARTNER'
+          }
+        ];
+        finalRoutes = [
+          { boat_id: 'mock-1', embarkation_point: 'Porto Belo', destination_point: "Caixa d'Aço" },
+          { boat_id: 'mock-1', embarkation_point: 'Balneário Camboriú', destination_point: "Caixa d'Aço" },
+          { boat_id: 'mock-2', embarkation_point: 'Porto Belo', destination_point: "Caixa d'Aço" },
+        ];
+      }
+
+      setAllBoats(finalBoats); 
+      setFilteredBoats(finalBoats);
+      setRoutes(finalRoutes);
       
       const { data: resData } = await supabase.from('reservations').select('boat_id, start_date, end_date, status').not('status', 'in', '("CANCELLED","NO_SHOW")');
       if (resData) setReservations(resData);
