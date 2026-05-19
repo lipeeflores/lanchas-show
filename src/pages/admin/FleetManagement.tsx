@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Anchor, Ship, CalendarCheck, FileText, Banknote, Landmark, CheckCircle, Clock, AlertCircle, Wallet, Users, Bot, Plus, X, Save, Settings, Trash2, MapPin, Upload, Image as ImageIcon, Loader2 } from 'lucide-react';
+import { Anchor, Ship, CalendarCheck, FileText, Banknote, Landmark, CheckCircle, Clock, AlertCircle, Wallet, Users, Bot, Plus, X, Save, Settings, Trash2, MapPin, Upload, Image as ImageIcon, Loader2, Star } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 export default function FleetManagement() {
@@ -28,14 +28,27 @@ export default function FleetManagement() {
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Accounts Payable State
+  // General Expenses State (Contas Gerais)
   const [isPayableModalOpen, setIsPayableModalOpen] = useState(false);
   const [payableFormData, setPayableFormData] = useState({
     description: '',
     amount: 0,
-    payee_type: 'PARTNER' as 'PARTNER' | 'EXTERNAL',
+    payee_type: 'EXTERNAL' as 'PARTNER' | 'EXTERNAL',
     partner_id: '',
     status: 'PENDING'
+  });
+
+  // Expenses State
+  const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+  const [expenseSaving, setExpenseSaving] = useState(false);
+  const [expenseFormData, setExpenseFormData] = useState({
+    boat_id: '',
+    boat_name: '',
+    type: 'FIXED', // FIXED or VARIABLE
+    amount: 0,
+    date: new Date().toISOString().split('T')[0],
+    day: '10',
+    description: ''
   });
 
   const handleFileUpload = async (files: FileList | null) => {
@@ -223,17 +236,67 @@ export default function FleetManagement() {
     e.preventDefault();
     try {
       const payload = {
-        ...payableFormData,
-        partner_id: payableFormData.payee_type === 'PARTNER' ? payableFormData.partner_id : null
+        description: payableFormData.description,
+        amount: Number(payableFormData.amount),
+        payee_type: 'EXTERNAL',
+        partner_id: null,
+        status: 'PAID'
       };
       const { error } = await supabase
         .from('accounts_payable')
         .insert([payload]);
       if (error) throw error;
+
+      // Register in cash_transactions for DRE
+      await supabase.from('cash_transactions').insert([{
+        type: 'EXPENSE',
+        amount: Number(payableFormData.amount),
+        description: `Geral: ${payableFormData.description}`
+      }]);
+
       setIsPayableModalOpen(false);
       fetchData();
     } catch (error: any) {
       alert('Erro ao salvar conta: ' + error.message);
+    }
+  };
+
+  const handleSaveExpense = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (expenseSaving) return;
+    setExpenseSaving(true);
+    
+    let finalDate = expenseFormData.date;
+    if (expenseFormData.type === 'FIXED') {
+       const d = String(expenseFormData.day).padStart(2, '0');
+       finalDate = `2000-01-${d}`;
+    }
+
+    try {
+      const { data: exp, error } = await supabase.from('boat_expenses').insert([{
+        boat_id: expenseFormData.boat_id,
+        type: expenseFormData.type,
+        amount: Number(expenseFormData.amount),
+        date: finalDate,
+        description: expenseFormData.description,
+        category: expenseFormData.type === 'FIXED' ? 'FIXED_EXPENSE' : 'VARIABLE_EXPENSE'
+      }]).select('*').single();
+      if (error) throw error;
+
+      if (expenseFormData.type === 'VARIABLE') {
+          await supabase.from('cash_transactions').insert([{
+              type: 'EXPENSE',
+              amount: Number(expenseFormData.amount),
+              description: `Variável: ${expenseFormData.description} (${expenseFormData.boat_name})`
+          }]);
+      }
+      
+      setIsExpenseModalOpen(false);
+      fetchData();
+    } catch (error: any) {
+      alert('Erro ao salvar despesa: ' + error.message);
+    } finally {
+      setExpenseSaving(false);
     }
   };
 
@@ -309,6 +372,8 @@ export default function FleetManagement() {
 
   const ownBoats = boats.filter(b => b.owner_type === 'OWN');
   const partnerBoats = boats.filter(b => b.owner_type !== 'OWN');
+  const allBoatExpenses = boats.flatMap(b => (b.boat_expenses || []).map((e: any) => ({...e, boat_name: b.name})))
+    .sort((a, b) => new Date(b.created_at || b.date).getTime() - new Date(a.created_at || a.date).getTime());
 
   const formatCurrency = (val: number) => 
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val || 0);
@@ -350,6 +415,10 @@ export default function FleetManagement() {
             <Link to="/admin/calendario" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
               <Settings className="w-5 h-5" />
               <span className="font-medium text-sm">Temporada & Preços</span>
+            </Link>
+            <Link to="/admin/avaliacoes" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
+              <Star className="w-5 h-5" />
+              <span className="font-medium text-sm">Avaliações</span>
             </Link>
           </nav>
         </div>
@@ -421,12 +490,7 @@ export default function FleetManagement() {
                               </button>
                            </div>
 
-                           <div className="bg-slate-950 rounded-xl p-4 border border-slate-800 mb-6 text-sm">
-                               <p className="text-gray-400 font-medium mb-1 uppercase tracking-wider text-[10px]">Restrições & Regras Locais</p>
-                               <p className="text-gray-300">{boat.rules_and_info || 'Nenhuma regra específica cadastrada.'}</p>
-                           </div>
-
-                           <div className="grid grid-cols-2 gap-4 border-t border-slate-800 pt-6">
+                           <div className="grid grid-cols-3 gap-4 border-t border-slate-800 pt-6">
                               <div>
                                  <p className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">Despesas Fixas</p>
                                  <p className="text-2xl font-bold text-slate-300 mb-1">{formatCurrency(totalFixed)}</p>
@@ -437,11 +501,30 @@ export default function FleetManagement() {
                                  <p className="text-2xl font-bold text-yellow-500 mb-1">{formatCurrency(totalVar)}</p>
                                  <p className="text-[10px] text-gray-500">Pós-passeios</p>
                               </div>
+                              <div>
+                                 <p className="text-red-400 text-xs font-bold uppercase tracking-wider mb-2">Custo de Saída</p>
+                                 <p className="text-2xl font-bold text-red-500 mb-1">{formatCurrency(boat.original_rate || 0)}</p>
+                                 <p className="text-[10px] text-gray-500">Por locação</p>
+                              </div>
                            </div>
 
                            <div className="mt-6 flex gap-3">
-                              <button className="flex-1 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-500 font-bold py-2 rounded-lg border border-yellow-500/30 transition-colors text-sm">
-                                + Lançar Var. (Combustível)
+                              <button 
+                                onClick={() => {
+                                  setExpenseFormData({
+                                    boat_id: boat.id,
+                                    boat_name: boat.name,
+                                    type: 'FIXED',
+                                    amount: 0,
+                                    date: new Date().toISOString().split('T')[0],
+                                    day: '10',
+                                    description: ''
+                                  });
+                                  setIsExpenseModalOpen(true);
+                                }}
+                                className="flex-1 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-500 font-bold py-2 rounded-lg border border-yellow-500/30 transition-colors text-sm"
+                              >
+                                + Adicionar Despesas
                               </button>
                            </div>
                         </div>
@@ -513,9 +596,13 @@ export default function FleetManagement() {
 
                 {/* CONTAS A PAGAR TAB */}
                 {activeTab === 'PAYABLES' && (
+                  <div className="space-y-6">
                   <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl overflow-hidden">
                     <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
-                        <h2 className="text-lg font-bold text-white flex items-center gap-2">Repasses Pendentes e Contas</h2>
+                        <div>
+                          <h2 className="text-lg font-bold text-white flex items-center gap-2">Contas Gerais da Empresa</h2>
+                          <p className="text-xs text-gray-500 mt-1">Gastos administrativos, mercado, salários fixos, materiais, etc.</p>
+                        </div>
                         <button 
                            onClick={() => {
                              setPayableFormData({ description: '', amount: 0, payee_type: 'EXTERNAL', partner_id: '', status: 'PENDING' });
@@ -523,60 +610,35 @@ export default function FleetManagement() {
                            }}
                            className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 text-xs font-bold px-4 py-2 rounded-lg transition-colors shadow-[0_0_15px_rgba(234,179,8,0.2)]"
                          >
-                             + Lançar Avulso
+                             + Lançar Gasto
                         </button>
                     </div>
                     
-                    {payables.length === 0 ? (
-                        <div className="p-10 text-center text-gray-500 italic">Nenhuma conta pendente de repasse no momento.</div>
+                    {payables.filter(p => p.payee_type === 'EXTERNAL').length === 0 ? (
+                        <div className="p-10 text-center text-gray-500 italic">Nenhum gasto geral lançado ainda.</div>
                     ) : ( 
                         <table className="w-full text-left border-collapse">
                             <thead>
                                 <tr className="bg-slate-950 border-b border-slate-800 text-xs uppercase tracking-wider text-gray-500">
-                                    <th className="p-4 font-medium">Data Recebimento</th>
-                                    <th className="p-4 font-medium">Favorecido (Ponta)</th>
+                                    <th className="p-4 font-medium">Data</th>
                                     <th className="p-4 font-medium">Descrição</th>
                                     <th className="p-4 font-medium text-right">Valor</th>
-                                    <th className="p-4 font-medium text-center">Status</th>
                                     <th className="p-4 font-medium"></th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {payables.map(pay => (
+                                {payables.filter(p => p.payee_type === 'EXTERNAL').map(pay => (
                                     <tr key={pay.id} className="border-b border-slate-800/50 hover:bg-slate-800/30 transition-colors">
                                         <td className="p-4 text-sm text-gray-300">
                                             {new Date(pay.created_at).toLocaleDateString('pt-BR')}
                                         </td>
                                         <td className="p-4 text-sm font-medium text-white">
-                                            {pay.partners?.name || 'Fornecedor Externo'}
-                                            {pay.payee_type === 'PARTNER' && <span className="ml-2 bg-yellow-500/10 text-yellow-500 text-[10px] px-1.5 py-0.5 rounded border border-yellow-500/20">Dono</span>}
-                                        </td>
-                                        <td className="p-4 text-sm text-gray-400">
                                             {pay.description}
                                         </td>
                                         <td className="p-4 text-sm font-bold text-right text-white">
                                             {formatCurrency(pay.amount)}
                                         </td>
-                                        <td className="p-4 text-center">
-                                            {pay.status === 'PENDING' ? (
-                                                <span className="bg-red-500/10 text-red-500 text-xs font-bold px-2 py-1 rounded inline-flex items-center gap-1">
-                                                    <Clock className="w-3 h-3"/> Pendente
-                                                </span>
-                                            ) : (
-                                                <span className="bg-green-500/10 text-green-500 text-xs font-bold px-2 py-1 rounded inline-flex items-center gap-1">
-                                                    <CheckCircle className="w-3 h-3"/> Pago
-                                                </span>
-                                            )}
-                                        </td>
-                                        <td className="p-4 text-right flex items-center justify-end gap-2">
-                                             {pay.status === 'PENDING' && (
-                                                 <button 
-                                                   onClick={() => handleMarkAsPaid(pay.id)}
-                                                   className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors"
-                                                 >
-                                                     Dar Baixa
-                                                 </button>
-                                             )}
+                                        <td className="p-4 text-right">
                                              <button 
                                                onClick={() => handleDeletePayable(pay.id)}
                                                className="p-1.5 text-gray-500 hover:text-red-500 transition-colors"
@@ -590,6 +652,75 @@ export default function FleetManagement() {
                             </tbody>
                         </table>
                     )}
+                  </div>
+                    
+                  <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl overflow-hidden">
+                    {/* Lista de Despesas das Lanchas */}
+                    <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+                        <div>
+                          <h2 className="text-lg font-bold text-white flex items-center gap-2">Despesas das Embarcações</h2>
+                          <p className="text-xs text-gray-500 mt-1">Despesas fixas e variáveis vinculadas a cada barco.</p>
+                        </div>
+                    </div>
+                    {allBoatExpenses.length === 0 ? (
+                        <div className="p-10 text-center text-gray-500 italic">Nenhuma despesa de embarcação cadastrada.</div>
+                    ) : ( 
+                        <table className="w-full text-left border-collapse">
+                            <thead>
+                                <tr className="bg-slate-950 border-b border-slate-800 text-xs uppercase tracking-wider text-gray-500">
+                                    <th className="p-4 font-medium">Data / Vencimento</th>
+                                    <th className="p-4 font-medium">Embarcação</th>
+                                    <th className="p-4 font-medium">Descrição</th>
+                                    <th className="p-4 font-medium">Tipo</th>
+                                    <th className="p-4 font-medium text-right">Valor</th>
+                                    <th className="p-4 font-medium"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {allBoatExpenses.map(exp => (
+                                    <tr key={exp.id} className="border-b border-slate-800/50 hover:bg-slate-800/30 transition-colors">
+                                        <td className="p-4 text-sm text-gray-300">
+                                            {exp.type === 'FIXED' ? `Dia ${exp.date.split('-')[2]}` : new Date(exp.date).toLocaleDateString('pt-BR', {timeZone: 'UTC'})}
+                                        </td>
+                                        <td className="p-4 text-sm font-medium text-white">
+                                            {exp.boat_name}
+                                        </td>
+                                        <td className="p-4 text-sm text-gray-400">
+                                            {exp.description}
+                                        </td>
+                                        <td className="p-4 text-sm">
+                                            {exp.type === 'FIXED' ? (
+                                                <span className="bg-blue-500/10 text-blue-500 text-[10px] uppercase font-bold px-2 py-1 rounded">Fixo Mensal</span>
+                                            ) : (
+                                                <span className="bg-orange-500/10 text-orange-500 text-[10px] uppercase font-bold px-2 py-1 rounded">Variável</span>
+                                            )}
+                                        </td>
+                                        <td className="p-4 text-sm font-bold text-right text-white">
+                                            {formatCurrency(exp.amount)}
+                                        </td>
+                                        <td className="p-4 text-right">
+                                            <button 
+                                              onClick={async () => {
+                                                  if(!window.confirm('Deseja realmente excluir esta despesa?')) return;
+                                                  try {
+                                                    await supabase.from('boat_expenses').delete().eq('id', exp.id);
+                                                    fetchData();
+                                                  } catch (err) {
+                                                    alert('Erro ao excluir despesa');
+                                                  }
+                                              }}
+                                              className="p-1.5 text-gray-500 hover:text-red-500 transition-colors"
+                                              title="Excluir"
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
+                  </div>
                   </div>
                 )}
             </div>
@@ -712,6 +843,14 @@ export default function FleetManagement() {
                              </select>
                            </div>
                         )}
+
+                        <div>
+                           <label className="text-xs text-gray-500 uppercase font-bold flex items-center gap-1">Custo Fixo de Saída <span title="Valor descontado automaticamente do Lucro Bruto na DRE. (Marinheiro, Pier, etc)" className="text-yellow-500 cursor-help">⚡</span></label>
+                           <div className="relative mt-1">
+                             <span className="absolute left-4 top-2 text-gray-500">R$</span>
+                             <input type="number" required value={formData.original_rate} onChange={e => setFormData({...formData, original_rate: Number(e.target.value)})} className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-10 pr-4 py-2 text-white focus:border-yellow-500 focus:outline-none"/>
+                           </div>
+                        </div>
 
                         <div className="pt-2 border-t border-slate-800">
                           <h4 className="text-xs font-bold uppercase text-yellow-500 mb-4 flex items-center gap-2 pt-2">
@@ -911,14 +1050,14 @@ export default function FleetManagement() {
           </div>
         )}
 
-        {/* Modal de Contas a Pagar */}
+        {/* Modal de Conta Geral */}
         {isPayableModalOpen && (
           <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
                <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
                   <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                    <Wallet className="w-5 h-5 text-yellow-500" />
-                    Lançar Conta Avulsa
+                    <Banknote className="w-5 h-5 text-yellow-500" />
+                    Lançar Gasto Geral
                   </h2>
                   <button onClick={() => setIsPayableModalOpen(false)} className="text-gray-500 hover:text-white transition-colors">
                      <X className="w-6 h-6"/>
@@ -927,13 +1066,13 @@ export default function FleetManagement() {
                
                <form onSubmit={handleSavePayable} className="p-6 space-y-4">
                   <div>
-                    <label className="text-xs text-gray-500 uppercase font-bold">Descrição</label>
+                    <label className="text-xs text-gray-500 uppercase font-bold">Descrição do Gasto</label>
                     <input 
                       type="text" 
                       required 
                       value={payableFormData.description} 
                       onChange={e => setPayableFormData({...payableFormData, description: e.target.value})} 
-                      placeholder="Ex: Manutenção Elétrica, Limpeza..."
+                      placeholder="Ex: Produto de limpeza, Salário Marinheiro, Material..."
                       className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:border-yellow-500 outline-none"
                     />
                   </div>
@@ -943,45 +1082,115 @@ export default function FleetManagement() {
                     <input 
                       type="number" 
                       required 
-                      value={payableFormData.amount} 
+                      value={payableFormData.amount || ''} 
                       onChange={e => setPayableFormData({...payableFormData, amount: Number(e.target.value)})} 
                       className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:border-yellow-500 outline-none"
                     />
                   </div>
 
-                  <div>
-                    <label className="text-xs text-gray-500 uppercase font-bold">Favorecido</label>
-                    <select 
-                      value={payableFormData.payee_type} 
-                      onChange={e => setPayableFormData({...payableFormData, payee_type: e.target.value as any})}
-                      className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:border-yellow-500 outline-none"
-                    >
-                      <option value="EXTERNAL">Fornecedor Externo</option>
-                      <option value="PARTNER">Parceiro/Dono</option>
-                    </select>
+                  <div className="bg-slate-950 p-3 rounded-lg border border-slate-800">
+                    <p className="text-[10px] text-gray-500">Este valor será lançado automaticamente como saída no caixa (DRE) e ficará registrado nesta lista para controle.</p>
                   </div>
-
-                  {payableFormData.payee_type === 'PARTNER' && (
-                    <div>
-                      <label className="text-xs text-gray-500 uppercase font-bold">Selecionar Parceiro</label>
-                      <select 
-                        required
-                        value={payableFormData.partner_id} 
-                        onChange={e => setPayableFormData({...payableFormData, partner_id: e.target.value})}
-                        className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:border-yellow-500 outline-none"
-                      >
-                        <option value="">Selecione...</option>
-                        {allPartners.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                      </select>
-                    </div>
-                  )}
 
                   <div className="pt-4 flex justify-end gap-3">
                     <button type="button" onClick={() => setIsPayableModalOpen(false)} className="px-4 py-2 text-gray-400 font-bold hover:text-white transition-colors">
                       Cancelar
                     </button>
                     <button type="submit" className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 font-bold px-6 py-2 rounded-lg transition-colors">
-                      Salvar Conta
+                      Lançar Gasto
+                    </button>
+                  </div>
+               </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Despesas */}
+        {isExpenseModalOpen && (
+          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+               <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+                  <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                    <Banknote className="w-5 h-5 text-yellow-500" />
+                    Adicionar Despesa
+                  </h2>
+                  <button onClick={() => setIsExpenseModalOpen(false)} className="text-gray-500 hover:text-white transition-colors">
+                     <X className="w-6 h-6"/>
+                  </button>
+               </div>
+               
+               <form onSubmit={handleSaveExpense} className="p-6 space-y-4">
+                  <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 mb-4">
+                    <p className="text-xs text-gray-500 uppercase font-bold">Lancha Selecionada</p>
+                    <p className="text-sm font-bold text-white">{expenseFormData.boat_name}</p>
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-gray-500 uppercase font-bold">Tipo de Despesa</label>
+                    <select 
+                      value={expenseFormData.type} 
+                      onChange={e => setExpenseFormData({...expenseFormData, type: e.target.value})}
+                      className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:border-yellow-500 outline-none"
+                    >
+                      <option value="FIXED">Fixa (Ex: Marina, Seguro, Marinheiro)</option>
+                      <option value="VARIABLE">Variável (Ex: Combustível, Limpeza)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-gray-500 uppercase font-bold">Valor (R$)</label>
+                    <input 
+                      type="number" 
+                      required 
+                      value={expenseFormData.amount || ''} 
+                      onChange={e => setExpenseFormData({...expenseFormData, amount: Number(e.target.value)})} 
+                      className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:border-yellow-500 outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-gray-500 uppercase font-bold">
+                       {expenseFormData.type === 'FIXED' ? 'Dia de Vencimento (Todo Mês)' : 'Data do Pagamento'}
+                    </label>
+                    {expenseFormData.type === 'FIXED' ? (
+                       <input 
+                         type="number" 
+                         min="1" max="31"
+                         required 
+                         value={expenseFormData.day} 
+                         onChange={e => setExpenseFormData({...expenseFormData, day: e.target.value})} 
+                         className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:border-yellow-500 outline-none"
+                       />
+                    ) : (
+                       <input 
+                         type="date" 
+                         required 
+                         value={expenseFormData.date} 
+                         onChange={e => setExpenseFormData({...expenseFormData, date: e.target.value})} 
+                         className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:border-yellow-500 outline-none"
+                       />
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-gray-500 uppercase font-bold">Descrição / Especificação</label>
+                    <input 
+                      type="text" 
+                      required 
+                      value={expenseFormData.description} 
+                      onChange={e => setExpenseFormData({...expenseFormData, description: e.target.value})} 
+                      placeholder="Ex: Abastecimento 100L..."
+                      className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:border-yellow-500 outline-none"
+                    />
+                  </div>
+
+                  <div className="pt-4 flex justify-end gap-3 border-t border-slate-800 mt-2">
+                    <button type="button" onClick={() => setIsExpenseModalOpen(false)} className="px-4 py-2 text-gray-400 font-bold hover:text-white transition-colors">
+                      Cancelar
+                    </button>
+                    <button type="submit" disabled={expenseSaving} className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 font-bold px-6 py-2 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2">
+                      {expenseSaving ? <Loader2 className="w-4 h-4 animate-spin"/> : null}
+                      Salvar Despesa
                     </button>
                   </div>
                </form>

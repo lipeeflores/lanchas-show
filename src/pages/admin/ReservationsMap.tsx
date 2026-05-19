@@ -3,7 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { 
   Anchor, Ship, CalendarCheck, Search, ChevronLeft, ChevronRight, UserPlus, 
   Filter, BellRing, Settings, Landmark, Wallet, Users, Bot, X, Check, 
-  Clock, Plus, AlertCircle, MessageSquare, Save, MapPin, Loader2 
+  Clock, Plus, AlertCircle, MessageSquare, Save, MapPin, Loader2, Star 
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { getRoutePriceSuggestion, PricingTier } from '../../lib/pricingEngine';
@@ -24,12 +24,17 @@ export default function ReservationsMap() {
   });
 
   const [formData, setFormData] = useState({
+    id: '',
     boat_id: '',
     customer_id: '',
+    customer_name: '',
+    customer_phone: '',
     date: today.toISOString().split('T')[0],
     embarkation: '',
     destination: '',
     base_price: 0,
+    paid_amount: 0,
+    commission_value: 0,
     floating_mat: 'none', // none, paid, courtesy
     extra_hours: 0,
     status: 'PENDING',
@@ -39,6 +44,17 @@ export default function ReservationsMap() {
   const [availableRoutes, setAvailableRoutes] = useState<any[]>([]);
   const [pricingInfo, setPricingInfo] = useState<{ tier: string; reason: string } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [activeField, setActiveField] = useState<'name' | 'phone' | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
+  const [feedbackData, setFeedbackData] = useState({
+    customerId: '',
+    reservationId: '',
+    stars: 5,
+    notes: '',
+    tags: [] as string[]
+  });
 
   const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
@@ -58,7 +74,7 @@ export default function ReservationsMap() {
 
         const { data: resData, error: resError } = await supabase
           .from('reservations')
-          .select('*, customers(full_name)')
+          .select('*, customers(full_name, phone, tags, rating_stars, rating_notes)')
           .gte('end_date', today.toISOString())
           .lte('start_date', endDateRange.toISOString());
         
@@ -71,7 +87,16 @@ export default function ReservationsMap() {
                const eDate = new Date(r.end_date); eDate.setHours(0,0,0,0);
                const offsetDays = Math.round((sDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
                const lengthDays = Math.max(1, Math.round((eDate.getTime() - sDate.getTime()) / (1000 * 60 * 60 * 24)));
-               return { offset: offsetDays, length: lengthDays, status: r.status, client: r.customers?.full_name || 'Cliente' };
+               return { 
+                 offset: offsetDays, 
+                 length: lengthDays, 
+                 status: r.status, 
+                 client: r.customers?.full_name || 'Cliente', 
+                 tags: r.customers?.tags || [],
+                 boarding: r.boarding_point || '',
+                 destination: r.destination || '',
+                 originalData: r 
+               };
             });
             return { ...b, reservations: mappedRsv };
         }) || [];
@@ -106,10 +131,8 @@ export default function ReservationsMap() {
         const { data } = await supabase.from('boat_routes_pricing').select('*').eq('boat_id', formData.boat_id);
         const routes = data || [];
         setAvailableRoutes(routes);
-        // If current embark/dest not in routes, clear them
-        if (!routes.some(r => r.embarkation_point === formData.embarkation && r.destination_point === formData.destination)) {
-          setFormData(prev => ({ ...prev, embarkation: '', destination: '', base_price: 0 }));
-        }
+        // We no longer clear embarkation automatically here because the user might have selected a fallback option 
+        // that is valid for the boat but not explicitly in `boat_routes_pricing`.
       };
       fetchRoutes();
     }
@@ -129,8 +152,34 @@ export default function ReservationsMap() {
 
   const handleSaveReservation = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.boat_id || !formData.customer_id) return;
+    if (!formData.boat_id) {
+      alert("Por favor, selecione uma embarcação.");
+      return;
+    }
+    if (!formData.customer_id && (!formData.customer_name || !formData.customer_phone)) {
+      alert("Por favor, selecione um cliente ou preencha nome e telefone para cadastrar um novo.");
+      return;
+    }
     setIsSaving(true);
+
+    let finalCustomerId = formData.customer_id;
+    
+    // If no existing customer selected, create a new one
+    if (!finalCustomerId) {
+      const { data: newCustomer, error: customerError } = await supabase.from('customers').insert([{
+        full_name: formData.customer_name,
+        phone: formData.customer_phone
+      }]).select().single();
+      
+      if (customerError) {
+        console.error("Erro ao criar cliente:", customerError.message);
+        alert("Erro ao criar cadastro do cliente.");
+        setIsSaving(false);
+        return;
+      }
+      finalCustomerId = newCustomer.id;
+      setAllCustomers(prev => [...prev, newCustomer]);
+    }
 
     const matValue = formData.floating_mat === 'paid' ? 300 : 0;
     const extraHoursValue = formData.extra_hours * 1000;
@@ -138,7 +187,7 @@ export default function ReservationsMap() {
 
     const payload = {
       boat_id: formData.boat_id,
-      customer_id: formData.customer_id,
+      customer_id: finalCustomerId,
       start_date: new Date(formData.date + 'T09:00:00').toISOString(),
       end_date: new Date(formData.date + 'T17:00:00').toISOString(),
       status: formData.status,
@@ -148,42 +197,158 @@ export default function ReservationsMap() {
       extra_hours_qty: formData.extra_hours,
       extra_hours_total_value: extraHoursValue,
       total_reservation_value: total,
+      paid_amount: formData.paid_amount,
+      commission_value: formData.commission_value,
+      boarding_point: formData.embarkation,
+      destination: formData.destination,
+      notes: formData.notes,
       total_price: total // legacy support
     };
 
-    const { error } = await supabase.from('reservations').insert([payload]);
-    if (!error) {
+    const { error } = formData.id
+      ? await supabase.from('reservations').update(payload).eq('id', formData.id)
+      : await supabase.from('reservations').insert([payload]);
+    if (error) {
+      console.error('Erro ao salvar reserva:', error);
+      alert('Erro ao salvar reserva: ' + error.message);
+    } else {
       await fetchBoatsAndReservations();
       setIsModalOpen(false);
     }
     setIsSaving(false);
   };
 
+  const handleDeleteReservation = async () => {
+    if (!formData.id) return;
+    if (deleteConfirmText?.toLowerCase() !== 'apagar') {
+      alert("Ação cancelada. A palavra digitada não confere.");
+      return;
+    }
+    
+    setIsSaving(true);
+    const { error } = await supabase.from('reservations').delete().eq('id', formData.id);
+    if (error) {
+      console.error('Erro ao apagar reserva:', error);
+      alert('Erro ao apagar reserva: ' + error.message);
+    } else {
+      await fetchBoatsAndReservations();
+      setIsModalOpen(false);
+    }
+    setIsSaving(false);
+    setIsDeleting(false);
+    setDeleteConfirmText('');
+  };
+
   const openNewReservation = (boatId?: string, dateStr?: string) => {
     const selectedBoatId = boatId || (boats[0]?.id || '');
     
     setFormData({
+      id: '',
       boat_id: selectedBoatId,
       customer_id: '',
+      customer_name: '',
+      customer_phone: '',
       date: dateStr || today.toISOString().split('T')[0],
       embarkation: '',
       destination: '',
       base_price: 0,
+      paid_amount: 0,
+      commission_value: 0,
       floating_mat: 'none',
       extra_hours: 0,
       status: 'PENDING',
       notes: ''
     });
     setPricingInfo(null);
+    setActiveField(null);
     setIsModalOpen(true);
+  };
+
+  const openEditReservation = (res: any) => {
+    setFormData({
+      id: res.id,
+      boat_id: res.boat_id,
+      customer_id: res.customer_id,
+      customer_name: res.customers?.full_name || '',
+      customer_phone: res.customers?.phone || '',
+      date: res.start_date ? new Date(res.start_date).toISOString().split('T')[0] : today.toISOString().split('T')[0],
+      embarkation: res.boarding_point || '',
+      destination: res.destination || '',
+      base_price: res.base_price_closed || 0,
+      paid_amount: res.paid_amount || 0,
+      commission_value: res.commission_value || 0,
+      floating_mat: res.floating_mat_status || 'none',
+      extra_hours: res.extra_hours_qty || 0,
+      status: res.status || 'PENDING',
+      notes: res.notes || ''
+    });
+    setPricingInfo(null);
+    setActiveField(null);
+    setIsModalOpen(true);
+  };
+
+  const handleOpenFeedback = () => {
+    const cust = allCustomers.find(c => c.id === formData.customer_id);
+    setFeedbackData({
+      customerId: formData.customer_id,
+      reservationId: formData.id,
+      stars: cust?.rating_stars || 5,
+      notes: cust?.rating_notes || '',
+      tags: cust?.tags || []
+    });
+    setIsFeedbackOpen(true);
+  };
+
+  const handleSaveFeedback = async () => {
+    try {
+      if (!feedbackData.reservationId) return;
+
+      // 1. Update reservation status to COMPLETED
+      const { error: resError } = await supabase
+        .from('reservations')
+        .update({ status: 'COMPLETED' })
+        .eq('id', feedbackData.reservationId);
+      if (resError) throw resError;
+
+      // 2. Update customer record (tags, rating_stars, rating_notes)
+      if (feedbackData.customerId) {
+        const { error: custError } = await supabase
+          .from('customers')
+          .update({
+            tags: feedbackData.tags,
+            rating_stars: feedbackData.stars,
+            rating_notes: feedbackData.notes
+          })
+          .eq('id', feedbackData.customerId);
+        if (custError) throw custError;
+
+        // Update local state for allCustomers
+        setAllCustomers(prev => prev.map(c => 
+          c.id === feedbackData.customerId 
+            ? { ...c, tags: feedbackData.tags, rating_stars: feedbackData.stars, rating_notes: feedbackData.notes } 
+            : c
+        ));
+      }
+
+      // 3. Reload map and close modals
+      await fetchBoatsAndReservations();
+      setIsFeedbackOpen(false);
+      setIsModalOpen(false);
+    } catch (err: any) {
+      console.error('Erro ao finalizar passeio:', err.message);
+      alert('Erro ao finalizar passeio: ' + err.message);
+    }
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'CONFIRMED': return 'bg-green-500 border-green-600 font-bold';
+      case 'PENDING':
       case 'AWAITING_PARTNER': return 'bg-yellow-500 border-yellow-600 text-slate-900 font-bold';
       case 'PENDING_CONTRACT': return 'bg-blue-500 border-blue-600 font-bold';
       case 'BLOCKED': return 'bg-red-500 border-red-600 font-bold';
+      case 'RESCHEDULED': return 'bg-orange-500 border-orange-600 font-bold text-white';
+      case 'COMPLETED': return 'bg-emerald-600 border-emerald-700 text-white font-bold opacity-75';
       default: return 'bg-slate-700 border-slate-600 text-gray-300';
     }
   };
@@ -226,6 +391,10 @@ export default function ReservationsMap() {
               <Settings className="w-5 h-5" />
               <span className="font-medium text-sm">Temporada & Preços</span>
             </Link>
+            <Link to="/admin/avaliacoes" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
+              <Star className="w-5 h-5" />
+              <span className="font-medium text-sm">Avaliações</span>
+            </Link>
           </nav>
         </div>
       </aside>
@@ -240,9 +409,10 @@ export default function ReservationsMap() {
           <div className="flex gap-4">
             <div className="hidden lg:flex items-center gap-4 text-xs font-medium mr-4">
                <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-green-500 block border border-green-600"></span> Confirmado</span>
-               <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-yellow-500 block border border-yellow-600"></span> Aguardando Parc.</span>
+               <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-yellow-500 block border border-yellow-600"></span> Pendente</span>
                <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-blue-500 block border border-blue-600"></span> Pendente Contrato</span>
                <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-red-500 block border border-red-600"></span> Bloqueado</span>
+               <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-orange-500 block border border-orange-600"></span> Remarcar</span>
             </div>
             <button className="bg-slate-800 border border-slate-700 p-2 rounded-lg text-gray-400 hover:text-white transition-colors">
                 <Filter className="w-5 h-5"/>
@@ -285,7 +455,7 @@ export default function ReservationsMap() {
                 <div className="p-10 text-center text-yellow-500 animate-pulse">Sincronizando banco de reservas...</div>
               ) : (
                 boats.map((boat) => (
-                  <div key={boat.id} className="flex border-b border-slate-800/50 hover:bg-slate-800/30 transition-colors group relative min-h-[60px]">
+                  <div key={boat.id} className="flex border-b border-slate-800/50 hover:bg-slate-800/30 transition-colors group relative min-h-[85px]">
                     <div className="w-64 p-3 border-r border-slate-800 flex flex-col justify-center z-10 bg-slate-900/80 backdrop-blur-sm">
                       <div className="flex items-center justify-between">
                         <span className="font-bold text-white text-sm truncate pr-2">{boat.name}</span>
@@ -323,19 +493,43 @@ export default function ReservationsMap() {
                          return (
                             <div 
                                 key={idx} 
-                                className={`absolute top-2 bottom-2 rounded-md border shadow-md flex items-center px-2 cursor-pointer
-                                  ${getStatusColor(res.status)} hover:brightness-110 transition-all overflow-hidden whitespace-nowrap z-20`}
+                                onClick={() => openEditReservation(res.originalData)}
+                                className={`absolute top-1.5 bottom-1.5 rounded-xl border shadow-md flex flex-col justify-center items-start px-3 py-1.5 cursor-pointer
+                                  ${getStatusColor(res.status)} hover:brightness-110 transition-all overflow-hidden z-20 leading-snug`}
                                 style={{
                                     left: `${(startIdx / 14) * 100}%`,
                                     width: `${(visualLength / 14) * 100}%`,
-                                    marginLeft: '3px',
-                                    marginRight: '3px'
+                                    marginLeft: '4px',
+                                    marginRight: '4px'
                                 }}
                             >
-                                <span className={`text-[10px] truncate ${res.status === 'AWAITING_PARTNER' ? 'text-slate-900' : 'text-white'}`}>
-                                    {res.status === 'BLOCKED' ? 'Manutenção' : 
-                                     res.status === 'AWAITING_PARTNER' ? `Aguar.L2: ${res.client}` : res.client}
+                                <span className={`text-xs font-black truncate w-full ${res.status === 'AWAITING_PARTNER' ? 'text-slate-900' : 'text-white'}`}>
+                                    {res.status === 'BLOCKED' ? '🚫 Manutenção' : 
+                                     res.status === 'AWAITING_PARTNER' ? `⚓ L2: ${res.client}` : res.client}
                                 </span>
+
+                                {res.status !== 'BLOCKED' && (res.boarding || res.destination) && (
+                                  <span className={`text-[9px] font-medium opacity-85 truncate w-full ${res.status === 'AWAITING_PARTNER' ? 'text-slate-800' : 'text-gray-200'} mt-0.5`}>
+                                    📍 {res.boarding || 'N/A'} ➔ {res.destination || 'N/A'}
+                                  </span>
+                                )}
+
+                                {res.status !== 'BLOCKED' && res.tags && res.tags.length > 0 && (
+                                  <div className="flex flex-wrap gap-0.5 mt-1 w-full overflow-hidden max-h-[14px]">
+                                    {res.tags.slice(0, 2).map((t: string) => (
+                                      <span key={t} className={`text-[7px] font-black uppercase tracking-wider px-1 rounded border leading-none py-0.5 whitespace-nowrap ${
+                                        res.status === 'AWAITING_PARTNER'
+                                          ? 'bg-slate-950/10 border-slate-950/20 text-slate-900'
+                                          : 'bg-slate-950/40 border-yellow-500/20 text-yellow-400'
+                                      }`}>
+                                        {t}
+                                      </span>
+                                    ))}
+                                    {res.tags.length > 2 && (
+                                      <span className={`text-[7px] font-bold ${res.status === 'AWAITING_PARTNER' ? 'text-slate-700' : 'text-gray-400'}`}>+</span>
+                                    )}
+                                  </div>
+                                )}
                             </div>
                          )
                       })}
@@ -379,20 +573,171 @@ export default function ReservationsMap() {
                     </h3>
                     
                     <div className="space-y-4">
-                      <div className="group">
-                        <label className="text-[10px] text-gray-500 uppercase font-bold mb-1.5 block">Cliente Registrado</label>
-                        <select 
+                      <div className="group relative">
+                        <label className="text-[10px] text-gray-500 uppercase font-bold mb-1.5 block">Nome do Cliente</label>
+                        <input 
+                          type="text"
                           required
-                          value={formData.customer_id} 
-                          onChange={e => setFormData({...formData, customer_id: e.target.value})}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-yellow-500 transition-all outline-none text-sm appearance-none cursor-pointer"
-                        >
-                          <option value="">Buscar cliente no banco...</option>
-                          {allCustomers.map(c => (
-                            <option key={c.id} value={c.id}>{c.full_name} ({c.phone})</option>
-                          ))}
-                        </select>
+                          value={formData.customer_name} 
+                          onChange={e => {
+                            setFormData({...formData, customer_name: e.target.value, customer_id: ''});
+                            setActiveField('name');
+                          }}
+                          onFocus={() => setActiveField('name')}
+                          onBlur={() => setTimeout(() => setActiveField(null), 200)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-yellow-500 transition-all outline-none text-sm cursor-text"
+                          placeholder="Digite o nome..."
+                        />
+                        
+                        {activeField === 'name' && (formData.customer_name || formData.customer_phone) && (
+                          <div className="absolute z-50 w-full mt-1 bg-slate-800 border border-slate-700 rounded-xl shadow-xl max-h-48 overflow-y-auto">
+                            {allCustomers.filter(c => 
+                              (formData.customer_name && c.full_name?.toLowerCase().includes(formData.customer_name.toLowerCase())) || 
+                              (formData.customer_phone && c.phone?.includes(formData.customer_phone))
+                            ).map(c => (
+                              <div 
+                                key={c.id} 
+                                className="px-4 py-3 hover:bg-slate-700 cursor-pointer border-b border-slate-700/50 last:border-0"
+                                onClick={() => {
+                                  setFormData({
+                                    ...formData, 
+                                    customer_id: c.id, 
+                                    customer_name: c.full_name, 
+                                    customer_phone: c.phone || ''
+                                  });
+                                  setActiveField(null);
+                                }}
+                              >
+                                <div className="text-white font-bold text-sm flex items-center justify-between">
+                                  <span>{c.full_name}</span>
+                                  {c.tags && c.tags.length > 0 && (
+                                    <div className="flex gap-1 shrink-0">
+                                      {c.tags.map((tag: string) => (
+                                        <span key={tag} className="text-[9px] bg-yellow-500/20 text-yellow-500 px-1 py-0.5 rounded border border-yellow-500/30 leading-none">
+                                          {tag}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="text-gray-400 text-xs flex justify-between items-center mt-1">
+                                  <span>{c.phone || 'Sem telefone'}</span>
+                                  {c.rating_stars ? (
+                                    <span className="text-yellow-500 text-xs font-bold">⭐ {c.rating_stars}/5</span>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ))}
+                            {allCustomers.filter(c => 
+                              (formData.customer_name && c.full_name?.toLowerCase().includes(formData.customer_name.toLowerCase())) || 
+                              (formData.customer_phone && c.phone?.includes(formData.customer_phone))
+                            ).length === 0 && (
+                              <div className="px-4 py-3 text-gray-400 text-sm">Nenhum cliente encontrado. Um novo será cadastrado.</div>
+                            )}
+                          </div>
+                        )}
                       </div>
+
+                      <div className="group relative">
+                        <label className="text-[10px] text-gray-500 uppercase font-bold mb-1.5 block">Telefone (WhatsApp)</label>
+                        <input 
+                          type="text"
+                          required
+                          value={formData.customer_phone} 
+                          onChange={e => {
+                            setFormData({...formData, customer_phone: e.target.value, customer_id: ''});
+                            setActiveField('phone');
+                          }}
+                          onFocus={() => setActiveField('phone')}
+                          onBlur={() => setTimeout(() => setActiveField(null), 200)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-yellow-500 transition-all outline-none text-sm cursor-text"
+                          placeholder="(XX) XXXXX-XXXX"
+                        />
+                        
+                        {activeField === 'phone' && (formData.customer_name || formData.customer_phone) && (
+                          <div className="absolute z-50 w-full mt-1 bg-slate-800 border border-slate-700 rounded-xl shadow-xl max-h-48 overflow-y-auto">
+                            {allCustomers.filter(c => 
+                              (formData.customer_name && c.full_name?.toLowerCase().includes(formData.customer_name.toLowerCase())) || 
+                              (formData.customer_phone && c.phone?.includes(formData.customer_phone))
+                            ).map(c => (
+                              <div 
+                                key={c.id} 
+                                className="px-4 py-3 hover:bg-slate-700 cursor-pointer border-b border-slate-700/50 last:border-0"
+                                onClick={() => {
+                                  setFormData({
+                                    ...formData, 
+                                    customer_id: c.id, 
+                                    customer_name: c.full_name, 
+                                    customer_phone: c.phone || ''
+                                  });
+                                  setActiveField(null);
+                                }}
+                              >
+                                <div className="text-white font-bold text-sm flex items-center justify-between">
+                                  <span>{c.full_name}</span>
+                                  {c.tags && c.tags.length > 0 && (
+                                    <div className="flex gap-1 shrink-0">
+                                      {c.tags.map((tag: string) => (
+                                        <span key={tag} className="text-[9px] bg-yellow-500/20 text-yellow-500 px-1 py-0.5 rounded border border-yellow-500/30 leading-none">
+                                          {tag}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="text-gray-400 text-xs flex justify-between items-center mt-1">
+                                  <span>{c.phone || 'Sem telefone'}</span>
+                                  {c.rating_stars ? (
+                                    <span className="text-yellow-500 text-xs font-bold">⭐ {c.rating_stars}/5</span>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ))}
+                            {allCustomers.filter(c => 
+                              (formData.customer_name && c.full_name?.toLowerCase().includes(formData.customer_name.toLowerCase())) || 
+                              (formData.customer_phone && c.phone?.includes(formData.customer_phone))
+                            ).length === 0 && (
+                              <div className="px-4 py-3 text-gray-400 text-sm">Nenhum cliente encontrado. Um novo será cadastrado.</div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {formData.customer_id && (() => {
+                        const selectedCust = allCustomers.find(c => c.id === formData.customer_id);
+                        if (!selectedCust) return null;
+                        return (
+                          <div className="bg-slate-950/60 border border-slate-800 rounded-2xl p-4 space-y-2 mt-2">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-gray-400 font-bold uppercase tracking-wider">Histórico CRM:</span>
+                              <span className="text-yellow-500 font-bold flex items-center gap-1">
+                                {selectedCust.rating_stars ? (
+                                  <>
+                                    <span className="text-yellow-500">{'★'.repeat(selectedCust.rating_stars)}{'☆'.repeat(5 - selectedCust.rating_stars)}</span>
+                                    <span>({selectedCust.rating_stars}/5)</span>
+                                  </>
+                                ) : 'Sem estrelas'}
+                              </span>
+                            </div>
+                            {selectedCust.tags && selectedCust.tags.length > 0 ? (
+                              <div className="flex flex-wrap gap-1.5">
+                                {selectedCust.tags.map((tag: string) => (
+                                  <span key={tag} className="text-[10px] bg-yellow-500/10 text-yellow-500 px-2 py-0.5 rounded-full border border-yellow-500/20 font-bold uppercase tracking-wider">
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-[11px] text-gray-500 italic block">Nenhuma tag de comportamento.</span>
+                            )}
+                            {selectedCust.rating_notes && (
+                              <div className="text-[11px] text-gray-400 italic bg-slate-900/40 p-2.5 rounded-xl border border-slate-800/40">
+                                "{selectedCust.rating_notes}"
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       <div className="group">
                         <label className="text-[10px] text-gray-500 uppercase font-bold mb-1.5 block">Embarcação</label>
@@ -402,6 +747,7 @@ export default function ReservationsMap() {
                           onChange={e => setFormData({...formData, boat_id: e.target.value})}
                           className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-yellow-500 transition-all outline-none text-sm appearance-none cursor-pointer"
                         >
+                          <option value="">Selecione uma lancha...</option>
                           {boats.map(b => (
                             <option key={b.id} value={b.id}>{b.name}</option>
                           ))}
@@ -431,14 +777,16 @@ export default function ReservationsMap() {
                       <div className="group">
                         <label className="text-[10px] text-gray-500 uppercase font-bold mb-1.5 block">Ponto de Embarque</label>
                         <select 
-                          required
                           value={formData.embarkation} 
                           onChange={e => setFormData({...formData, embarkation: e.target.value})}
                           className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-yellow-500 transition-all outline-none text-sm appearance-none cursor-pointer"
                         >
                           <option value="">Selecione origem...</option>
-                          {Array.from(new Set(availableRoutes.map(r => r.embarkation_point))).map(p => (
-                            <option key={p} value={p}>{p}</option>
+                          {Array.from(new Set([
+                             ...availableRoutes.map(r => r.embarkation_point),
+                             ...(boats.find(b => b.id === formData.boat_id)?.boarding_points || [])
+                          ])).map(p => (
+                            <option key={p as string} value={p as string}>{p as string}</option>
                           ))}
                         </select>
                       </div>
@@ -446,15 +794,17 @@ export default function ReservationsMap() {
                       <div className="group">
                         <label className="text-[10px] text-gray-500 uppercase font-bold mb-1.5 block">Destino Principal</label>
                         <select 
-                          required
                           disabled={!formData.embarkation}
                           value={formData.destination} 
                           onChange={e => setFormData({...formData, destination: e.target.value})}
                           className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:border-yellow-500 transition-all outline-none text-sm appearance-none disabled:opacity-30 disabled:cursor-not-allowed"
                         >
                           <option value="">Selecione destino...</option>
-                          {availableRoutes.filter(r => r.embarkation_point === formData.embarkation).map(r => (
-                            <option key={r.destination_point} value={r.destination_point}>{r.destination_point}</option>
+                          {Array.from(new Set([
+                             ...availableRoutes.filter(r => r.embarkation_point === formData.embarkation).map(r => r.destination_point),
+                             ...(boats.find(b => b.id === formData.boat_id)?.allowed_destinations || [])
+                          ])).map(p => (
+                            <option key={p as string} value={p as string}>{p as string}</option>
                           ))}
                         </select>
                       </div>
@@ -483,17 +833,47 @@ export default function ReservationsMap() {
                     </h3>
 
                     <div className="space-y-4">
-                      <div>
-                        <label className="text-[10px] text-gray-500 uppercase font-bold mb-1.5 block">Valor Fechado (Base)</label>
-                        <div className="relative group">
-                          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 font-medium">R$</span>
-                          <input 
-                            type="number"
-                            value={formData.base_price}
-                            onChange={e => setFormData({...formData, base_price: Number(e.target.value)})}
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-12 pr-4 py-3 text-white font-black text-lg focus:border-yellow-500 outline-none transition-all"
-                          />
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-[10px] text-gray-500 uppercase font-bold mb-1.5 block">Valor Fechado (Base)</label>
+                          <div className="relative group">
+                            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 font-medium">R$</span>
+                            <input 
+                              type="number"
+                              value={formData.base_price}
+                              onChange={e => setFormData({...formData, base_price: Number(e.target.value)})}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-12 pr-4 py-3 text-white font-black text-lg focus:border-yellow-500 outline-none transition-all"
+                            />
+                          </div>
                         </div>
+
+                        <div>
+                          <label className="text-[10px] text-gray-500 uppercase font-bold mb-1.5 block">Valor Sinal (Recebido)</label>
+                          <div className="relative group">
+                            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 font-medium">R$</span>
+                            <input 
+                              type="number"
+                              value={formData.paid_amount}
+                              onChange={e => setFormData({...formData, paid_amount: Number(e.target.value)})}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-12 pr-4 py-3 text-white font-black text-lg focus:border-yellow-500 outline-none transition-all"
+                            />
+                          </div>
+                        </div>
+
+                        {boats.find(b => b.id === formData.boat_id)?.owner_type !== 'OWN' && (
+                          <div className="col-span-2 mt-2">
+                            <label className="text-[10px] text-emerald-500 uppercase font-bold mb-1.5 block">Comissão Lanchas Show (Líquido)</label>
+                            <div className="relative group">
+                              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-emerald-500 font-medium">R$</span>
+                              <input 
+                                type="number"
+                                value={formData.commission_value}
+                                onChange={e => setFormData({...formData, commission_value: Number(e.target.value)})}
+                                className="w-full bg-slate-950 border border-emerald-500/30 rounded-xl pl-12 pr-4 py-3 text-emerald-400 font-black text-lg focus:border-emerald-500 outline-none transition-all"
+                              />
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       <div className="grid grid-cols-2 gap-4">
@@ -523,10 +903,18 @@ export default function ReservationsMap() {
 
                       <div className="pt-6 border-t border-slate-800 mt-2">
                          <div className="flex justify-between items-center mb-4 bg-slate-950/50 p-4 rounded-2xl border border-slate-800/50">
-                            <span className="text-xs text-gray-500 font-bold uppercase tracking-wider">Total Geral</span>
-                            <span className="text-3xl font-black text-yellow-500">
-                               R$ {((Number(formData.base_price) || 0) + (formData.floating_mat === 'paid' ? 300 : 0) + (formData.extra_hours * 1000)).toLocaleString('pt-BR')}
-                            </span>
+                            <div className="flex flex-col">
+                               <span className="text-xs text-gray-500 font-bold uppercase tracking-wider">Total Geral</span>
+                               <span className="text-3xl font-black text-yellow-500">
+                                  R$ {((Number(formData.base_price) || 0) + (formData.floating_mat === 'paid' ? 300 : 0) + (formData.extra_hours * 1000)).toLocaleString('pt-BR')}
+                               </span>
+                            </div>
+                            <div className="flex flex-col text-right">
+                               <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Falta Receber no Embarque</span>
+                               <span className="text-xl font-bold text-red-400">
+                                  R$ {Math.max(0, ((Number(formData.base_price) || 0) + (formData.floating_mat === 'paid' ? 300 : 0) + (formData.extra_hours * 1000)) - (Number(formData.paid_amount) || 0)).toLocaleString('pt-BR')}
+                               </span>
+                            </div>
                          </div>
                          <select 
                            value={formData.status} 
@@ -536,7 +924,9 @@ export default function ReservationsMap() {
                             <option value="PENDING">💾 PENDENTE</option>
                             <option value="PENDING_CONTRACT">📄 CONTRATO</option>
                             <option value="CONFIRMED">✅ CONFIRMADO</option>
+                            <option value="RESCHEDULED">🔄 REMARCAR</option>
                             <option value="BLOCKED">🚫 BLOQUEADO</option>
+                            <option value="COMPLETED">⚓ CONCLUÍDO</option>
                          </select>
                       </div>
                     </div>
@@ -554,18 +944,163 @@ export default function ReservationsMap() {
                      className="w-full bg-slate-950/50 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm focus:border-yellow-500 outline-none h-24 transition-all resize-none"
                    />
                 </div>
-              </form>
 
-              <div className="p-8 border-t border-slate-800 bg-slate-900/50 flex justify-end items-center gap-6">
-                 <button onClick={() => setIsModalOpen(false)} className="text-gray-500 hover:text-white font-bold text-sm uppercase">Cancelar</button>
-                 <button 
-                  onClick={handleSaveReservation}
-                  disabled={isSaving || !formData.customer_id}
-                  className="bg-yellow-500 hover:bg-yellow-400 disabled:opacity-30 text-slate-900 font-black px-10 py-4 rounded-2xl transition-all shadow-[0_0_30px_rgba(234,179,8,0.2)] flex items-center gap-3"
-                 >
-                   {isSaving ? <Loader2 className="w-6 h-6 animate-spin"/> : <Check className="w-6 h-6"/>}
-                   {isSaving ? 'Salvando...' : 'Confirmar Reserva'}
-                 </button>
+                <div className="pt-8 border-t border-slate-800 flex justify-end items-center gap-6 mt-10">
+                   {formData.id && !isDeleting && (
+                     <button 
+                       type="button" 
+                       onClick={() => setIsDeleting(true)} 
+                       className="text-red-500 hover:text-red-400 font-bold text-sm uppercase mr-auto flex items-center gap-2"
+                     >
+                       Apagar Reserva
+                     </button>
+                   )}
+                   {formData.id && isDeleting && (
+                     <div className="mr-auto flex items-center gap-3 bg-red-500/10 p-2 rounded-lg border border-red-500/20">
+                       <span className="text-xs text-red-400 font-bold uppercase">Digite 'apagar':</span>
+                       <input 
+                         type="text" 
+                         value={deleteConfirmText}
+                         onChange={e => setDeleteConfirmText(e.target.value)}
+                         placeholder="apagar"
+                         className="bg-slate-900 border border-red-500/50 rounded px-2 py-1 text-white text-sm w-24 outline-none focus:border-red-500"
+                       />
+                       <button 
+                         type="button"
+                         onClick={handleDeleteReservation}
+                         className="bg-red-500 text-white text-xs font-bold px-3 py-1.5 rounded hover:bg-red-600 transition-colors"
+                       >
+                         Confirmar Exclusão
+                       </button>
+                       <button 
+                         type="button"
+                         onClick={() => { setIsDeleting(false); setDeleteConfirmText(''); }}
+                         className="text-gray-500 hover:text-white p-1"
+                       >
+                         <X className="w-4 h-4"/>
+                       </button>
+                     </div>
+                   )}
+                   {formData.id && formData.status !== 'COMPLETED' && (
+                     <button
+                       type="button"
+                       onClick={handleOpenFeedback}
+                       className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-6 py-4 rounded-2xl transition-all flex items-center gap-2"
+                     >
+                       ⚓ Finalizar Passeio
+                     </button>
+                   )}
+                   <button type="button" onClick={() => setIsModalOpen(false)} className="text-gray-500 hover:text-white font-bold text-sm uppercase">Cancelar</button>
+                   <button 
+                    type="submit"
+                    disabled={isSaving || (!formData.customer_id && (!formData.customer_name || !formData.customer_phone))}
+                    className="bg-yellow-500 hover:bg-yellow-400 disabled:opacity-30 text-slate-900 font-black px-10 py-4 rounded-2xl transition-all shadow-[0_0_30px_rgba(234,179,8,0.2)] flex items-center gap-3"
+                   >
+                     {isSaving ? <Loader2 className="w-6 h-6 animate-spin"/> : <Check className="w-6 h-6"/>}
+                     {isSaving ? 'Salvando...' : 'Confirmar Reserva'}
+                   </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Avaliação / Feedback */}
+        {isFeedbackOpen && (
+          <div className="fixed inset-0 bg-slate-950/95 backdrop-blur-md z-[110] flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-lg shadow-[0_0_50px_rgba(0,0,0,0.8)] flex flex-col overflow-hidden">
+              <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <span>⚓ Finalizar Passeio & Avaliar Cliente</span>
+                </h3>
+                <button 
+                  type="button"
+                  onClick={() => setIsFeedbackOpen(false)}
+                  className="bg-slate-800 p-1.5 rounded-full text-gray-400 hover:text-white transition-colors"
+                >
+                  <X className="w-5 h-5"/>
+                </button>
+              </div>
+
+              <div className="p-6 space-y-6">
+                <div>
+                  <p className="text-xs text-gray-500 uppercase font-bold tracking-wider mb-1">Cliente</p>
+                  <p className="text-lg font-black text-white">{formData.customer_name}</p>
+                  <p className="text-xs text-gray-400">{formData.customer_phone}</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs text-gray-500 uppercase font-bold tracking-wider block">Avaliação do Cliente (Estrelas)</label>
+                  <div className="flex gap-2">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <button
+                        type="button"
+                        key={star}
+                        onClick={() => setFeedbackData({ ...feedbackData, stars: star })}
+                        className="text-3xl focus:outline-none transition-transform hover:scale-115"
+                      >
+                        <span className={star <= feedbackData.stars ? 'text-yellow-500' : 'text-slate-700'}>
+                          ★
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs text-gray-500 uppercase font-bold tracking-wider block">Tags de Comportamento</label>
+                  <div className="flex flex-wrap gap-2">
+                    {['Família', 'Bagunça', 'Não alugar mais', 'Tranquilo', 'Sem educação'].map((tag) => {
+                      const isSelected = feedbackData.tags.includes(tag);
+                      return (
+                        <button
+                          type="button"
+                          key={tag}
+                          onClick={() => {
+                            const newTags = isSelected
+                              ? feedbackData.tags.filter(t => t !== tag)
+                              : [...feedbackData.tags, tag];
+                            setFeedbackData({ ...feedbackData, tags: newTags });
+                          }}
+                          className={`px-3 py-1.5 rounded-full border text-xs font-bold transition-all ${
+                            isSelected
+                              ? 'bg-yellow-500 text-slate-900 border-yellow-500 shadow-md shadow-yellow-500/10'
+                              : 'bg-slate-950 border-slate-800 text-gray-400 hover:text-white hover:border-slate-700'
+                          }`}
+                        >
+                          {tag}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs text-gray-500 uppercase font-bold tracking-wider block">Observações do Cliente</label>
+                  <textarea
+                    value={feedbackData.notes}
+                    onChange={e => setFeedbackData({ ...feedbackData, notes: e.target.value })}
+                    placeholder="Adicione notas sobre o comportamento do cliente..."
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm focus:border-yellow-500 outline-none h-24 resize-none transition-all"
+                  />
+                </div>
+              </div>
+
+              <div className="p-6 border-t border-slate-800 flex justify-end gap-3 bg-slate-900/50">
+                <button
+                  type="button"
+                  onClick={() => setIsFeedbackOpen(false)}
+                  className="px-4 py-2 text-gray-400 font-bold hover:text-white transition-colors"
+                >
+                  Voltar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveFeedback}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-6 py-2.5 rounded-xl transition-all shadow-lg shadow-emerald-500/10"
+                >
+                  Salvar e Concluir Passeio
+                </button>
               </div>
             </div>
           </div>

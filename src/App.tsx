@@ -9,6 +9,8 @@ import FinancialDashboard from './pages/admin/FinancialDashboard';
 import CustomersDB from './pages/admin/CustomersDB';
 import AICommandCenter from './pages/admin/AICommandCenter';
 import CalendarSettings from './pages/admin/CalendarSettings';
+import ClientEvaluation from './pages/ClientEvaluation';
+import EvaluationsDashboard from './pages/admin/EvaluationsDashboard';
 import AdminGuard from './components/AdminGuard';
 import BoatDetails from './pages/BoatDetails';
 
@@ -18,6 +20,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/lancha/:id" element={<BoatDetails />} />
+        <Route path="/avaliacao" element={<ClientEvaluation />} />
         <Route path="/admin" element={<Login />} />
         <Route path="/admin/dashboard" element={<AdminGuard><Dashboard /></AdminGuard>} />
         <Route path="/admin/reservas" element={<AdminGuard><ReservationsMap /></AdminGuard>} />
@@ -26,6 +29,7 @@ export default function App() {
         <Route path="/admin/clientes" element={<AdminGuard><CustomersDB /></AdminGuard>} />
         <Route path="/admin/ia" element={<AdminGuard><AICommandCenter /></AdminGuard>} />
         <Route path="/admin/calendario" element={<AdminGuard><CalendarSettings /></AdminGuard>} />
+        <Route path="/admin/avaliacoes" element={<AdminGuard><EvaluationsDashboard /></AdminGuard>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

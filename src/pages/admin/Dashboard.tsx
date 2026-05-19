@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { Anchor, Ship, CalendarCheck, DollarSign, BellRing, AlertCircle, CheckCircle, Clock, Landmark, Wallet, Users, Bot, Settings } from 'lucide-react';
+import { Anchor, Ship, CalendarCheck, DollarSign, BellRing, AlertCircle, CheckCircle, Clock, Landmark, Wallet, Users, Bot, Settings, Star } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 
@@ -8,6 +8,7 @@ export default function Dashboard() {
   const [alerts, setAlerts] = useState<any[]>([]);
   const [partnersToApprove, setPartnersToApprove] = useState<any[]>([]);
   const [contractsPending, setContractsPending] = useState<any[]>([]);
+  const [pendingFixedExpenses, setPendingFixedExpenses] = useState<any[]>([]);
   
   const [stats, setStats] = useState({
       inWater: 0,
@@ -26,6 +27,53 @@ export default function Dashboard() {
             .order('created_at', { ascending: false })
             .limit(5);
         setAlerts(alertsData || []);
+
+        // Fetch Fixed Expenses and Payments
+        const { data: fixedExpenses } = await supabase
+            .from('boat_expenses')
+            .select('*, boats(name)')
+            .eq('type', 'FIXED');
+            
+        const { data: payableData } = await supabase
+            .from('accounts_payable')
+            .select('*')
+            .not('boat_expense_id', 'is', null);
+
+        if (fixedExpenses) {
+            const today = new Date();
+            const currentMonth = today.getMonth();
+            const currentYear = today.getFullYear();
+            
+            const pending: any[] = [];
+            
+            fixedExpenses.forEach(exp => {
+                const day = parseInt(exp.date.split('-')[2], 10);
+                const dueDate = new Date(currentYear, currentMonth, day);
+                
+                const diffTime = dueDate.getTime() - today.getTime();
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                
+                // Show if within 5 days or overdue (up to -30 days to avoid ancient alerts)
+                if (diffDays <= 5 && diffDays > -30) {
+                    const isPaidThisMonth = payableData?.some(p => {
+                        if (p.boat_expense_id !== exp.id || p.status !== 'PAID') return false;
+                        const pDate = new Date(p.created_at);
+                        return pDate.getMonth() === currentMonth && pDate.getFullYear() === currentYear;
+                    });
+                    
+                    if (!isPaidThisMonth) {
+                        pending.push({
+                            ...exp,
+                            due_date: dueDate,
+                            diffDays
+                        });
+                    }
+                }
+            });
+            
+            pending.sort((a,b) => a.diffDays - b.diffDays);
+            setPendingFixedExpenses(pending);
+        }
 
         // Fetch Reservations for metrics
         const { data: resData } = await supabase
@@ -55,11 +103,15 @@ export default function Dashboard() {
                revenue24h 
             });
 
-            // Action Requests: Partner approvals
-            setPartnersToApprove(resData.filter(r => r.status === 'AWAITING_PARTNER'));
+            // Action Requests: Partner approvals (only future/today)
+            // We consider 'now' ignoring time to not hide today's reservations
+            const todayStart = new Date();
+            todayStart.setHours(0, 0, 0, 0);
+
+            setPartnersToApprove(resData.filter(r => r.status === 'AWAITING_PARTNER' && new Date(r.start_date) >= todayStart));
             
-            // Action Requests: Pending contracts
-            setContractsPending(resData.filter(r => r.status === 'PENDING_CONTRACT'));
+            // Action Requests: Pending contracts (only future/today)
+            setContractsPending(resData.filter(r => r.status === 'PENDING_CONTRACT' && new Date(r.start_date) >= todayStart));
         }
 
         setLoading(false);
@@ -73,6 +125,66 @@ export default function Dashboard() {
       if(diff < 60) return `Há ${diff} minutos`;
       const hours = Math.floor(diff/60);
       return `Há ${hours} horas`;
+  };
+
+  const handleMarkExpensePaid = async (exp: any) => {
+      try {
+          await supabase.from('accounts_payable').insert([{
+              amount: exp.amount,
+              description: `Pagamento Fixo: ${exp.description}`,
+              status: 'PAID',
+              due_date: exp.due_date.toISOString().split('T')[0],
+              boat_expense_id: exp.id,
+              payee_type: 'EXTERNAL'
+          }]);
+          
+          await supabase.from('cash_transactions').insert([{
+              type: 'EXPENSE',
+              amount: exp.amount,
+              description: `Fixo: ${exp.description} (${exp.boats?.name})`
+          }]);
+          
+          setPendingFixedExpenses(prev => prev.filter(p => p.id !== exp.id));
+      } catch (err: any) {
+          alert('Erro ao dar baixa: ' + err.message);
+      }
+  };
+
+  const handleApprovePartner = async (id: string) => {
+      try {
+          await supabase.from('reservations').update({ status: 'PENDING_CONTRACT' }).eq('id', id);
+          const res = partnersToApprove.find(r => r.id === id);
+          if (res) {
+              setPartnersToApprove(prev => prev.filter(r => r.id !== id));
+              setContractsPending(prev => [{ ...res, status: 'PENDING_CONTRACT' }, ...prev]);
+          }
+          alert('Parceiro aprovado! Reserva enviada para fase de contratos.');
+      } catch (err: any) {
+          alert('Erro ao aprovar: ' + err.message);
+      }
+  };
+
+  const handleConfirmContract = async (id: string) => {
+      try {
+          await supabase.from('reservations').update({ status: 'CONFIRMED' }).eq('id', id);
+          setContractsPending(prev => prev.filter(r => r.id !== id));
+      } catch (err: any) {
+          alert('Erro ao confirmar contrato: ' + err.message);
+      }
+  };
+
+  const [contractData, setContractData] = useState<any>(null);
+
+  const handleGenerateContract = async (res: any) => {
+      const { data: customer } = await supabase.from('customers').select('*').eq('id', res.customer_id).single();
+      if (customer) res.customers = customer;
+      
+      const c = res.customers;
+      if (!c.document_cpf || !c.document_rg || !c.address) {
+          alert(`Faltam dados do cliente (${c?.full_name || 'Desconhecido'}) para gerar o contrato. Vá em "Clientes CRM" e preencha CPF, RG e Endereço completo.`);
+          return;
+      }
+      setContractData(res);
   };
 
   return (
@@ -113,6 +225,10 @@ export default function Dashboard() {
             <Link to="/admin/calendario" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
               <Settings className="w-5 h-5" />
               <span className="font-medium text-sm">Temporada & Preços</span>
+            </Link>
+            <Link to="/admin/avaliacoes" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
+              <Star className="w-5 h-5" />
+              <span className="font-medium text-sm">Avaliações</span>
             </Link>
           </nav>
         </div>
@@ -188,6 +304,45 @@ export default function Dashboard() {
             </section>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+                {/* Despesas Fixas */}
+                <section className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl p-6 lg:col-span-2">
+                <h2 className="text-sm font-bold uppercase tracking-widest text-gray-500 mb-6 flex items-center gap-2">
+                    <Wallet className="w-4 h-4 text-red-400" /> Avisos de Vencimento (Despesas Fixas)
+                </h2>
+                <div className="space-y-4">
+                    {pendingFixedExpenses.length === 0 ? (
+                        <p className="text-sm text-gray-500 italic">Nenhum vencimento próximo.</p>
+                    ) : pendingFixedExpenses.map(exp => (
+                    <div key={exp.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-slate-950 rounded-xl border border-red-500/20">
+                      <div className="flex items-center gap-4">
+                        <div className="bg-red-500/10 p-2 rounded-lg h-fit">
+                            <Wallet className="w-5 h-5 text-red-500" />
+                        </div>
+                        <div>
+                            <p className="text-white font-medium text-sm">
+                                {exp.description} <span className="text-gray-500 text-xs">({exp.boats?.name})</span>
+                            </p>
+                            <p className="text-xs text-gray-400 mt-1">
+                                Vence em: {exp.due_date.toLocaleDateString()} 
+                                <span className={exp.diffDays < 0 ? 'text-red-500 ml-2 font-bold' : 'text-yellow-500 ml-2'}>
+                                  {exp.diffDays < 0 ? `(Atrasado ${Math.abs(exp.diffDays)} dias)` : exp.diffDays === 0 ? '(Vence Hoje)' : `(Em ${exp.diffDays} dias)`}
+                                </span>
+                            </p>
+                        </div>
+                      </div>
+                      <div className="mt-4 sm:mt-0 flex items-center gap-4">
+                        <p className="text-lg font-bold text-white">
+                           {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(exp.amount)}
+                        </p>
+                        <button onClick={() => handleMarkExpensePaid(exp)} className="bg-green-500/10 hover:bg-green-500/20 border border-green-500/30 text-green-500 font-bold px-4 py-2 rounded-lg text-sm transition-colors">
+                           Dar Baixa
+                        </button>
+                      </div>
+                    </div>
+                    ))}
+                </div>
+                </section>
                 
                 {/* Alertas do Sistema */}
                 <section className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl p-6">
@@ -234,7 +389,7 @@ export default function Dashboard() {
                         </div>
                         <p className="text-xs text-gray-400 mt-1">Uma reserva para "{res.boats?.name}" (Parceiro: {res.boats?.partners?.name}) requer sua aprovação manual.</p>
                         <div className="mt-3 flex gap-2">
-                        <button className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors">Aprovar Status</button>
+                        <button onClick={() => handleApprovePartner(res.id)} className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors">Aprovar Status</button>
                         </div>
                     </div>
                     </div>
@@ -244,9 +399,15 @@ export default function Dashboard() {
                     <div key={res.id} className="flex gap-4 p-4 bg-slate-950 rounded-xl border border-slate-800">
                     <div className="bg-slate-800 p-2 rounded-lg h-fit"><CheckCircle className="w-5 h-5 text-gray-400" /></div>
                     <div className="w-full">
-                        <p className="text-white font-medium text-sm">Contrato Pendente</p>
+                        <div className="flex justify-between items-start mb-1">
+                            <p className="text-white font-medium text-sm">Contrato Pendente</p>
+                            <span className="bg-slate-700 text-gray-300 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">Ação Necessária</span>
+                        </div>
                         <p className="text-xs text-gray-400 mt-1">Reserva para {res.customers?.full_name} ({res.boats?.name}) aguardando contrato digital.</p>
-                        <button className="mt-3 text-yellow-500 hover:text-yellow-400 text-xs font-medium transition-colors">Gerar Contrato Automático &rarr;</button>
+                        <div className="mt-3 flex gap-3 items-center">
+                            <button onClick={() => handleGenerateContract(res)} className="text-yellow-500 hover:text-yellow-400 text-xs font-medium transition-colors border border-yellow-500/30 px-3 py-1.5 rounded-lg hover:bg-yellow-500/10">Gerar Contrato Automático &rarr;</button>
+                            <button onClick={() => handleConfirmContract(res.id)} className="text-green-500 hover:text-green-400 text-xs font-medium transition-colors border border-green-500/30 px-3 py-1.5 rounded-lg hover:bg-green-500/10">Marcar como Contratado</button>
+                        </div>
                     </div>
                     </div>
                     ))}
@@ -255,6 +416,50 @@ export default function Dashboard() {
 
             </div>
             </div>
+        )}
+
+        {/* Contract Modal */}
+        {contractData && (
+          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+               <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+                  <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                    Contrato Gerado Automáticamente
+                  </h2>
+                  <button onClick={() => setContractData(null)} className="text-gray-500 hover:text-white transition-colors">
+                     <span className="text-xl">&times;</span>
+                  </button>
+               </div>
+               <div className="p-6 overflow-y-auto flex-1 text-xs sm:text-sm text-gray-300 font-mono whitespace-pre-wrap bg-slate-950 m-4 rounded border border-slate-800 leading-relaxed">
+                 CONTRATO DE LOCAÇÃO DE EMBARCAÇÃO
+
+CONTRATANTE:
+Nome: {contractData.customers.full_name}
+CPF: {contractData.customers.document_cpf}
+RG: {contractData.customers.document_rg}
+Endereço: {contractData.customers.address}
+Telefone: {contractData.customers.phone}
+Email: {contractData.customers.email}
+
+CONTRATADA (DADOS DO BARCO):
+Embarcação: {contractData.boats.name}
+Valor Total: R$ {contractData.total_price}
+Sinal Recebido: R$ {contractData.down_payment}
+Data de Início: {new Date(contractData.start_date).toLocaleDateString()}
+Data de Término: {new Date(contractData.end_date).toLocaleDateString()}
+
+[COLE O SEU MODELO OFICIAL DE CONTRATO AQUI. As variáveis acima mostram que o sistema já consegue puxar todos os dados necessários. Você poderá editar este texto no código ou podemos criar uma tela de configurações para colar o modelo definitivo.]
+               </div>
+               <div className="p-6 border-t border-slate-800 flex justify-end gap-3 bg-slate-900/50">
+                  <button onClick={() => setContractData(null)} className="px-4 py-2 text-gray-400 font-bold hover:text-white transition-colors">
+                    Fechar
+                  </button>
+                  <button onClick={() => navigator.clipboard.writeText(`CONTRATANTE: ${contractData.customers.full_name}\nCPF: ${contractData.customers.document_cpf}`)} className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 font-bold px-6 py-2 rounded-lg transition-colors">
+                    Copiar Texto
+                  </button>
+               </div>
+            </div>
+          </div>
         )}
       </main>
     </div>

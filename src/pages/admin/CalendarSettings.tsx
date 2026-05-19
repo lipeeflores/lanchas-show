@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { getPricingTier, PricingTier } from '../../lib/pricingEngine';
-import { Anchor, Ship, CalendarCheck, Sun, Snowflake, PartyPopper, Landmark, Wallet, Users, Bot, Save, X, Plus, Trash2, CheckCircle, AlertCircle, Settings } from 'lucide-react';
+import { Anchor, Ship, CalendarCheck, Sun, Snowflake, PartyPopper, Landmark, Wallet, Users, Bot, Save, X, Plus, Trash2, CheckCircle, AlertCircle, Settings, Star } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 export default function CalendarSettings() {
@@ -158,6 +158,10 @@ export default function CalendarSettings() {
             <Link to="/admin/calendario" className="flex items-center gap-3 px-4 py-3 bg-slate-800 text-yellow-500 rounded-lg border border-slate-700">
               <Settings className="w-5 h-5" />
               <span className="font-medium text-sm">Temporada & Preços</span>
+            </Link>
+            <Link to="/admin/avaliacoes" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
+              <Star className="w-5 h-5" />
+              <span className="font-medium text-sm">Avaliações</span>
             </Link>
           </nav>
         </div>

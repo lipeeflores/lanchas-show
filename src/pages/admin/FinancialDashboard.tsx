@@ -1,81 +1,143 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Anchor, Ship, CalendarCheck, TrendingUp, TrendingDown, DollarSign, Wallet, Activity, Users, Landmark, Bot, Settings } from 'lucide-react';
+import { Ship, CalendarCheck, TrendingUp, TrendingDown, DollarSign, Wallet, Activity, Users, Landmark, Bot, Settings, BarChart3, PieChart as PieIcon, ArrowUpRight, ArrowDownRight, Minus, Star } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area, CartesianGrid } from 'recharts';
 
 export default function FinancialDashboard() {
-  const [transactions, setTransactions] = useState<any[]>([]);
-  const [profitOwn, setProfitOwn] = useState(0);
-  const [profitPartners, setProfitPartners] = useState(0);
-  const [ranking, setRanking] = useState<any[]>([]);
+  const [ledgerEntries, setLedgerEntries] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // DRE values
+  const [receitaBruta, setReceitaBruta] = useState(0);
+  const [custosSaida, setCustosSaida] = useState(0);
+  const [despesasOperacionais, setDespesasOperacionais] = useState(0);
+  const [lucroIntermediacao, setLucroIntermediacao] = useState(0);
+  const [ranking, setRanking] = useState<any[]>([]);
+  const [monthlyData, setMonthlyData] = useState<any[]>([]);
+  const [expenseBreakdown, setExpenseBreakdown] = useState<any[]>([]);
 
   useEffect(() => {
     const fetchFinance = async () => {
-      // Fetch Ledger
-      const { data: txData } = await supabase
-        .from('cash_transactions')
-        .select('*')
-        .order('created_at', { ascending: false });
-      
-      if(txData) setTransactions(txData);
+      const { data: txData } = await supabase.from('cash_transactions').select('*').order('created_at', { ascending: false });
 
-      // Fetch reservations to calculate profit
-      const { data: resData } = await supabase
-        .from('reservations')
-        .select('*, boats(*)');
-        
+      const { data: resData } = await supabase.from('reservations').select('*, boats(*), customers(full_name)');
       if(resData) {
-          let pOwn = 0;
-          let pPartners = 0;
-          
-          const boatCount: Record<string, {name: string, rentals: number, rev: number}> = {};
+        let rb = 0, cs = 0, lp = 0;
+        const boatCount: Record<string, {name: string, rentals: number, rev: number}> = {};
+        const monthly: Record<string, {month: string, receita: number, despesa: number}> = {};
 
-          resData.forEach(r => {
-             const b = r.boats;
-             if(!b) return;
+        // Build unified ledger: reservations as INCOME
+        const ledger: any[] = [];
 
-             // Build ranking obj
-             if(!boatCount[b.id]) boatCount[b.id] = { name: b.name, rentals: 0, rev: 0 };
-             boatCount[b.id].rentals += 1;
-             
-             if(b.owner_type === 'OWN') {
-                 pOwn += Number(r.total_price);
-                 boatCount[b.id].rev += Number(r.total_price);
-             } else {
-                 const diff = Number(r.total_price) - Number(b.partner_net_value || 0);
-                 pPartners += diff;
-                 boatCount[b.id].rev += diff;
-             }
+        resData.forEach(r => {
+          const b = r.boats;
+          if(!b) return;
+          if(!boatCount[b.id]) boatCount[b.id] = { name: b.name, rentals: 0, rev: 0 };
+          boatCount[b.id].rentals += 1;
+          const opCost = Number(b.original_rate || 0);
+
+          const d = new Date(r.created_at);
+          const mk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+          const ml = d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' });
+          if(!monthly[mk]) monthly[mk] = { month: ml, receita: 0, despesa: 0 };
+
+          // Add to ledger as INCOME
+          const clientName = r.customers?.full_name || 'Cliente';
+          ledger.push({
+            id: 'res-' + r.id,
+            type: 'INCOME',
+            amount: Number(r.total_price),
+            description: `Locação ${b.name} — ${clientName}`,
+            created_at: r.created_at
           });
 
-          // Fetch explicit expenses for own fleet and discount
-          const { data: expData } = await supabase.from('boat_expenses').select('*');
-          if(expData) {
-              const totalExp = expData.reduce((acc, e) => acc + Number(e.amount), 0);
-              pOwn -= totalExp; // Deduct fixed and variables from DRE
+          if(b.owner_type === 'OWN') {
+            rb += Number(r.total_price);
+            cs += opCost;
+            boatCount[b.id].rev += Number(r.total_price);
+            monthly[mk].receita += Number(r.total_price);
+          } else {
+            const diff = Number(r.total_price) - Number(b.partner_net_value || 0) - opCost;
+            lp += diff;
+            boatCount[b.id].rev += diff;
+            monthly[mk].receita += diff;
           }
+        });
 
-          setProfitOwn(pOwn);
-          setProfitPartners(pPartners);
-          
-          // Sort ranking top 3
-          const topBoats = Object.values(boatCount).sort((a,b) => b.rentals - a.rentals).slice(0,3);
-          setRanking(topBoats);
+        let de = 0;
+        const expCat: Record<string, number> = {};
+        if(txData) {
+          txData.filter(tx => tx.type === 'EXPENSE').forEach(tx => {
+            de += Number(tx.amount);
+            const desc = (tx.description || '').toLowerCase();
+            let cat = 'Outros';
+            if(desc.includes('fixo') || desc.includes('fixa')) cat = 'Despesas Fixas';
+            else if(desc.includes('combustível') || desc.includes('combustivel') || desc.includes('variável') || desc.includes('variavel')) cat = 'Despesas Variáveis';
+            else if(desc.includes('geral')) cat = 'Contas Gerais';
+            expCat[cat] = (expCat[cat] || 0) + Number(tx.amount);
+
+            // Add expenses to ledger
+            ledger.push({
+              id: tx.id,
+              type: 'EXPENSE',
+              amount: Number(tx.amount),
+              description: tx.description,
+              created_at: tx.created_at
+            });
+          });
+
+          txData.filter(tx => tx.type === 'EXPENSE').forEach(tx => {
+            const d = new Date(tx.created_at);
+            const mk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+            const ml = d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' });
+            if(!monthly[mk]) monthly[mk] = { month: ml, receita: 0, despesa: 0 };
+            monthly[mk].despesa += Number(tx.amount);
+          });
+        }
+
+        // Sort ledger by date desc
+        ledger.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        setLedgerEntries(ledger);
+
+        setReceitaBruta(rb);
+        setCustosSaida(cs);
+        setDespesasOperacionais(de);
+        setLucroIntermediacao(lp);
+        setRanking(Object.values(boatCount).sort((a,b) => b.rev - a.rev).slice(0,5));
+        setMonthlyData(Object.entries(monthly).sort(([a],[b]) => a.localeCompare(b)).map(([,v]) => v));
+        setExpenseBreakdown(Object.entries(expCat).map(([name, value]) => ({ name, value })));
       }
       
       setLoading(false);
     };
-
     fetchFinance();
   }, []);
 
-  const formatCurrency = (val: number) => 
-    new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val || 0);
+  const fmt = (val: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(val || 0);
+  const fmtFull = (val: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val || 0);
+  
+  const lucroLiquido = receitaBruta - custosSaida - despesasOperacionais;
+  const totalIncome = ledgerEntries.filter(t => t.type === 'INCOME').reduce((a,t) => a + Number(t.amount), 0);
+  const totalExpense = ledgerEntries.filter(t => t.type === 'EXPENSE').reduce((a,t) => a + Number(t.amount), 0);
+  const saldoCaixa = totalIncome - totalExpense;
+
+  const PIE_COLORS = ['#eab308', '#ef4444', '#3b82f6', '#22c55e', '#a855f7'];
+
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload) return null;
+    return (
+      <div className="bg-slate-900 border border-slate-700 rounded-lg p-3 shadow-xl">
+        <p className="text-xs text-gray-400 mb-1">{label}</p>
+        {payload.map((p: any, i: number) => (
+          <p key={i} className="text-sm font-bold" style={{ color: p.color }}>{p.name}: {fmtFull(p.value)}</p>
+        ))}
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-slate-950 flex text-slate-50 font-sans selection:bg-yellow-500/30">
-      
       <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col hidden md:flex shrink-0">
         <div className="p-6 flex items-center justify-center border-b border-slate-800">
           <img src="/logo.png" alt="Lanchas Show" className="h-16 w-auto drop-shadow-[0_0_8px_rgba(234,179,8,0.2)]" />
@@ -89,6 +151,7 @@ export default function FinancialDashboard() {
             <Link to="/admin/clientes" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors"><Users className="w-5 h-5" /><span className="text-sm">Clientes CRM</span></Link>
             <Link to="/admin/ia" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors"><Bot className="w-5 h-5" /><span className="text-sm">Central IA</span></Link>
             <Link to="/admin/calendario" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors"><Settings className="w-5 h-5" /><span className="text-sm">Temporada & Preços</span></Link>
+            <Link to="/admin/avaliacoes" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors"><Star className="w-5 h-5" /><span className="text-sm">Avaliações</span></Link>
           </nav>
         </div>
       </aside>
@@ -96,8 +159,8 @@ export default function FinancialDashboard() {
       <main className="flex-1 overflow-auto bg-slate-950">
         <header className="bg-slate-900/50 backdrop-blur-md border-b border-slate-800 p-6 flex justify-between items-center">
           <div>
-            <h1 className="text-2xl font-serif font-bold text-white">Report Financeiro</h1>
-            <p className="text-sm text-gray-400">DRE Oficial e Extrato de Caixa</p>
+            <h1 className="text-2xl font-serif font-bold text-white">DRE & Balanço Financeiro</h1>
+            <p className="text-sm text-gray-400">Demonstração do Resultado do Exercício e Fluxo de Caixa</p>
           </div>
         </header>
 
@@ -106,77 +169,206 @@ export default function FinancialDashboard() {
         ) : (
           <div className="p-6 max-w-7xl mx-auto space-y-6">
             
-            {/* DRE Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-               <div className="bg-gradient-to-br from-slate-900 to-slate-800 border border-slate-800 p-6 rounded-2xl shadow-xl relative overflow-hidden group">
-                  <Activity className="absolute -right-6 -top-6 w-32 h-32 text-slate-800/50" />
-                  <p className="text-gray-400 text-sm font-medium mb-1 relative z-10">DRE Frota Própria (Líquido)</p>
-                  <p className={`text-4xl font-bold mb-2 relative z-10 ${profitOwn >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                      {formatCurrency(profitOwn)}
-                  </p>
-                  <p className="text-xs text-slate-500 relative z-10">Despesas fixas e variáveis deduzidas.</p>
-               </div>
-               <div className="bg-gradient-to-br from-slate-900 to-slate-800 border border-yellow-500/30 p-6 rounded-2xl shadow-xl relative overflow-hidden group">
-                  <DollarSign className="absolute -right-6 -top-6 w-32 h-32 text-yellow-500/5" />
-                  <p className="text-yellow-500/80 text-sm font-medium mb-1 relative z-10">Lucro Intermediação Parceiros</p>
-                  <p className="text-4xl font-bold text-yellow-500 mb-2 relative z-10">
-                      {formatCurrency(profitPartners)}
-                  </p>
-                  <p className="text-xs text-yellow-500/60 relative z-10">Spread livre (Venda - Valor Dono).</p>
-               </div>
+            {/* KPI Cards Row */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-16 h-16 bg-green-500/5 rounded-bl-full"></div>
+                <p className="text-xs text-gray-500 uppercase font-bold tracking-wider mb-2">Receita Bruta</p>
+                <p className="text-2xl font-bold text-green-500">{fmt(receitaBruta + lucroIntermediacao)}</p>
+                <div className="flex items-center gap-1 mt-2"><ArrowUpRight className="w-3 h-3 text-green-500"/><span className="text-[10px] text-green-500">Frota + Parceiros</span></div>
+              </div>
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-16 h-16 bg-red-500/5 rounded-bl-full"></div>
+                <p className="text-xs text-gray-500 uppercase font-bold tracking-wider mb-2">Custos Totais</p>
+                <p className="text-2xl font-bold text-red-500">{fmt(custosSaida + despesasOperacionais)}</p>
+                <div className="flex items-center gap-1 mt-2"><ArrowDownRight className="w-3 h-3 text-red-500"/><span className="text-[10px] text-red-500">Saída + Despesas</span></div>
+              </div>
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-16 h-16 bg-yellow-500/5 rounded-bl-full"></div>
+                <p className="text-xs text-gray-500 uppercase font-bold tracking-wider mb-2">Lucro Líquido</p>
+                <p className={`text-2xl font-bold ${lucroLiquido + lucroIntermediacao >= 0 ? 'text-yellow-500' : 'text-red-500'}`}>{fmt(lucroLiquido + lucroIntermediacao)}</p>
+                <div className="flex items-center gap-1 mt-2"><Minus className="w-3 h-3 text-yellow-500"/><span className="text-[10px] text-yellow-500">Resultado Final</span></div>
+              </div>
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-16 h-16 bg-blue-500/5 rounded-bl-full"></div>
+                <p className="text-xs text-gray-500 uppercase font-bold tracking-wider mb-2">Saldo em Caixa</p>
+                <p className={`text-2xl font-bold ${saldoCaixa >= 0 ? 'text-blue-400' : 'text-red-500'}`}>{fmt(saldoCaixa)}</p>
+                <div className="flex items-center gap-1 mt-2"><Wallet className="w-3 h-3 text-blue-400"/><span className="text-[10px] text-blue-400">Entradas - Saídas</span></div>
+              </div>
             </div>
 
+            {/* Charts Row */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-               
-               {/* Extrato de Caixa */}
-               <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-                  <div className="p-5 border-b border-slate-800 flex justify-between">
-                      <h2 className="font-bold text-white uppercase tracking-wider text-sm flex items-center gap-2">Extrato de Caixa (Ledger)</h2>
-                  </div>
-                  <table className="w-full text-left">
-                      <thead className="bg-slate-950/50">
-                          <tr>
-                              <th className="p-4 text-xs text-gray-500 uppercase">Data</th>
-                              <th className="p-4 text-xs text-gray-500 uppercase">Descrição</th>
-                              <th className="p-4 text-xs text-gray-500 uppercase text-right">Valor</th>
-                          </tr>
-                      </thead>
-                      <tbody>
-                          {transactions.map(tx => (
-                              <tr key={tx.id} className="border-b border-slate-800/50 hover:bg-slate-800/30">
-                                  <td className="p-4 text-sm text-gray-400">{new Date(tx.created_at).toLocaleDateString()}</td>
-                                  <td className="p-4 text-sm font-medium text-white">{tx.description}</td>
-                                  <td className="p-4 text-sm text-right font-bold flex items-center justify-end gap-2">
-                                      {tx.type === 'INCOME' ? <TrendingUp className="w-4 h-4 text-green-500" /> : <TrendingDown className="w-4 h-4 text-red-500" />}
-                                      <span className={tx.type === 'INCOME' ? 'text-green-500' : 'text-red-500'}>
-                                          {tx.type === 'INCOME' ? '+' : '-'}{formatCurrency(tx.amount)}
-                                      </span>
-                                  </td>
-                              </tr>
-                          ))}
-                      </tbody>
-                  </table>
-               </div>
+              {/* Area Chart - Receita vs Despesa */}
+              <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+                <h2 className="text-sm font-bold uppercase tracking-wider text-gray-500 mb-4 flex items-center gap-2"><BarChart3 className="w-4 h-4 text-yellow-500"/>Receita vs Despesas (Mensal)</h2>
+                {monthlyData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={280}>
+                    <AreaChart data={monthlyData}>
+                      <defs>
+                        <linearGradient id="colorReceita" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#22c55e" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#22c55e" stopOpacity={0}/>
+                        </linearGradient>
+                        <linearGradient id="colorDespesa" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                      <XAxis dataKey="month" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} />
+                      <YAxis tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickFormatter={v => `${(v/1000).toFixed(0)}k`} />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Area type="monotone" dataKey="receita" name="Receita" stroke="#22c55e" fill="url(#colorReceita)" strokeWidth={2} />
+                      <Area type="monotone" dataKey="despesa" name="Despesa" stroke="#ef4444" fill="url(#colorDespesa)" strokeWidth={2} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                ) : <p className="text-gray-500 text-sm italic text-center py-20">Sem dados suficientes para gráfico.</p>}
+              </div>
 
-               {/* Ranking */}
-               <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl p-5 h-fit">
-                  <h2 className="font-bold text-white uppercase tracking-wider text-sm mb-4">🏆 Top Performance</h2>
-                  <div className="space-y-4">
-                      {ranking.map((boat, index) => (
-                         <div key={index} className="flex items-center gap-4 bg-slate-950 p-3 rounded-xl border border-slate-800">
-                             <div className="w-8 h-8 rounded bg-yellow-500/10 text-yellow-500 font-bold flex items-center justify-center border border-yellow-500/20">{index + 1}</div>
-                             <div>
-                                 <p className="text-white font-medium text-sm">{boat.name}</p>
-                                 <p className="text-xs text-gray-500">{boat.rentals} locações</p>
-                             </div>
-                             <div className="ml-auto text-right">
-                                <span className="text-xs bg-slate-800 text-white px-2 py-1 rounded block">{formatCurrency(boat.rev)} Margem</span>
-                             </div>
-                         </div>
+              {/* Pie Chart - Breakdown Despesas */}
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+                <h2 className="text-sm font-bold uppercase tracking-wider text-gray-500 mb-4 flex items-center gap-2"><PieIcon className="w-4 h-4 text-yellow-500"/>Composição das Despesas</h2>
+                {expenseBreakdown.length > 0 ? (
+                  <>
+                    <ResponsiveContainer width="100%" height={180}>
+                      <PieChart>
+                        <Pie data={expenseBreakdown} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3} dataKey="value">
+                          {expenseBreakdown.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+                        </Pie>
+                        <Tooltip formatter={(v: number) => fmtFull(v)} contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8 }} itemStyle={{ color: '#e2e8f0' }} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="space-y-2 mt-2">
+                      {expenseBreakdown.map((item, i) => (
+                        <div key={i} className="flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: PIE_COLORS[i % PIE_COLORS.length] }}></div>
+                            <span className="text-gray-400">{item.name}</span>
+                          </div>
+                          <span className="text-white font-bold">{fmtFull(item.value)}</span>
+                        </div>
                       ))}
-                  </div>
-               </div>
+                    </div>
+                  </>
+                ) : <p className="text-gray-500 text-sm italic text-center py-20">Nenhuma despesa registrada.</p>}
+              </div>
+            </div>
 
+            {/* DRE Table + Ranking */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              
+              {/* DRE Formal */}
+              <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl overflow-hidden">
+                <div className="p-5 border-b border-slate-800 bg-slate-900/50">
+                  <h2 className="font-bold text-white uppercase tracking-wider text-sm flex items-center gap-2"><Activity className="w-4 h-4 text-yellow-500"/>Demonstração do Resultado (DRE)</h2>
+                </div>
+                <div className="divide-y divide-slate-800">
+                  <div className="flex justify-between items-center px-6 py-4">
+                    <span className="text-sm text-gray-300 font-medium">(+) Receita Bruta Frota Própria</span>
+                    <span className="text-sm font-bold text-green-500">{fmtFull(receitaBruta)}</span>
+                  </div>
+                  <div className="flex justify-between items-center px-6 py-4">
+                    <span className="text-sm text-gray-300 font-medium">(+) Lucro Intermediação Parceiros</span>
+                    <span className="text-sm font-bold text-green-500">{fmtFull(lucroIntermediacao)}</span>
+                  </div>
+                  <div className="flex justify-between items-center px-6 py-4 bg-green-500/5">
+                    <span className="text-sm text-green-400 font-bold">(=) RECEITA TOTAL</span>
+                    <span className="text-sm font-bold text-green-400">{fmtFull(receitaBruta + lucroIntermediacao)}</span>
+                  </div>
+                  <div className="flex justify-between items-center px-6 py-4">
+                    <span className="text-sm text-gray-300 font-medium">(−) Custos de Saída (Pier, Marinheiro)</span>
+                    <span className="text-sm font-bold text-red-500">-{fmtFull(custosSaida)}</span>
+                  </div>
+                  <div className="flex justify-between items-center px-6 py-4 bg-yellow-500/5">
+                    <span className="text-sm text-yellow-400 font-bold">(=) LUCRO BRUTO</span>
+                    <span className="text-sm font-bold text-yellow-400">{fmtFull(receitaBruta + lucroIntermediacao - custosSaida)}</span>
+                  </div>
+                  <div className="flex justify-between items-center px-6 py-4">
+                    <span className="text-sm text-gray-300 font-medium">(−) Despesas Operacionais</span>
+                    <span className="text-sm font-bold text-red-500">-{fmtFull(despesasOperacionais)}</span>
+                  </div>
+                  <div className={`flex justify-between items-center px-6 py-5 ${lucroLiquido + lucroIntermediacao >= 0 ? 'bg-green-500/10' : 'bg-red-500/10'}`}>
+                    <span className={`text-base font-bold ${lucroLiquido + lucroIntermediacao >= 0 ? 'text-green-400' : 'text-red-400'}`}>(=) LUCRO LÍQUIDO</span>
+                    <span className={`text-lg font-bold ${lucroLiquido + lucroIntermediacao >= 0 ? 'text-green-400' : 'text-red-400'}`}>{fmtFull(lucroLiquido + lucroIntermediacao)}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Top Performance Ranking */}
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl overflow-hidden">
+                <div className="p-5 border-b border-slate-800 bg-slate-900/50">
+                  <h2 className="font-bold text-white uppercase tracking-wider text-sm">🏆 Top Performance</h2>
+                </div>
+                <div className="p-4 space-y-3">
+                  {ranking.map((boat, index) => (
+                    <div key={index} className="flex items-center gap-3 bg-slate-950 p-3 rounded-xl border border-slate-800">
+                      <div className={`w-8 h-8 rounded-lg font-bold flex items-center justify-center text-sm ${index === 0 ? 'bg-yellow-500/20 text-yellow-500 border border-yellow-500/30' : 'bg-slate-800 text-gray-400 border border-slate-700'}`}>{index + 1}</div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white font-medium text-sm truncate">{boat.name}</p>
+                        <p className="text-[10px] text-gray-500">{boat.rentals} locações</p>
+                      </div>
+                      <span className="text-xs font-bold text-yellow-500">{fmt(boat.rev)}</span>
+                    </div>
+                  ))}
+                  {ranking.length === 0 && <p className="text-gray-500 text-sm italic text-center py-6">Sem dados.</p>}
+                </div>
+              </div>
+            </div>
+
+            {/* Revenue by Boat Bar Chart */}
+            {ranking.length > 0 && (
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+                <h2 className="text-sm font-bold uppercase tracking-wider text-gray-500 mb-4 flex items-center gap-2"><BarChart3 className="w-4 h-4 text-yellow-500"/>Receita Líquida por Embarcação</h2>
+                <ResponsiveContainer width="100%" height={250}>
+                  <BarChart data={ranking} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
+                    <XAxis type="number" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickFormatter={v => `${(v/1000).toFixed(0)}k`} />
+                    <YAxis type="category" dataKey="name" tick={{ fill: '#e2e8f0', fontSize: 12 }} axisLine={false} width={140} />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Bar dataKey="rev" name="Receita Líq." fill="#eab308" radius={[0, 6, 6, 0]} barSize={28} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* Extrato de Caixa */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+              <div className="p-5 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+                <h2 className="font-bold text-white uppercase tracking-wider text-sm flex items-center gap-2"><DollarSign className="w-4 h-4 text-yellow-500"/>Extrato de Caixa (Ledger)</h2>
+                <div className="flex items-center gap-4 text-xs">
+                  <span className="text-green-500 font-bold">Entradas: {fmtFull(totalIncome)}</span>
+                  <span className="text-red-500 font-bold">Saídas: {fmtFull(totalExpense)}</span>
+                </div>
+              </div>
+              <div className="max-h-[400px] overflow-y-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-slate-950/50 sticky top-0">
+                    <tr>
+                      <th className="p-4 text-xs text-gray-500 uppercase">Data</th>
+                      <th className="p-4 text-xs text-gray-500 uppercase">Descrição</th>
+                      <th className="p-4 text-xs text-gray-500 uppercase text-right">Valor</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ledgerEntries.map(tx => (
+                      <tr key={tx.id} className="border-b border-slate-800/50 hover:bg-slate-800/30 transition-colors">
+                        <td className="p-4 text-sm text-gray-400">{new Date(tx.created_at).toLocaleDateString('pt-BR')}</td>
+                        <td className="p-4 text-sm font-medium text-white">{tx.description}</td>
+                        <td className="p-4 text-sm text-right font-bold">
+                          <span className={`inline-flex items-center gap-1 ${tx.type === 'INCOME' ? 'text-green-500' : 'text-red-500'}`}>
+                            {tx.type === 'INCOME' ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                            {tx.type === 'INCOME' ? '+' : '-'}{fmtFull(tx.amount)}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                    {ledgerEntries.length === 0 && (
+                      <tr><td colSpan={3} className="p-10 text-center text-gray-500 italic">Nenhuma movimentação registrada.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
           </div>
