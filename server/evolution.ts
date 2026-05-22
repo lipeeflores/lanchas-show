@@ -21,7 +21,7 @@ export interface QrCodeResponse {
 }
 
 /**
- * Ensures the instance is created in Evolution API.
+ * Ensures the instance is created in Evolution API and registers its webhook.
  */
 export async function ensureInstanceCreated(): Promise<void> {
   try {
@@ -48,6 +48,51 @@ export async function ensureInstanceCreated(): Promise<void> {
       } else {
         console.warn(`[Evolution] Warning creating instance:`, data);
       }
+    }
+
+    // Configure Webhook if BACKEND_URL or RAILWAY_STATIC_URL is present
+    const rawHost = process.env.BACKEND_URL || 
+                    (process.env.RAILWAY_STATIC_URL ? `https://${process.env.RAILWAY_STATIC_URL}` : null);
+                        
+    if (rawHost) {
+      // Ensure no trailing slash and correct https protocol prefix
+      let backendHost = rawHost;
+      if (!backendHost.startsWith('http://') && !backendHost.startsWith('https://')) {
+        backendHost = `https://${backendHost}`;
+      }
+      if (backendHost.endsWith('/')) {
+        backendHost = backendHost.slice(0, -1);
+      }
+      
+      const webhookUrl = `${backendHost}/api/whatsapp/webhook`;
+      console.log(`[Evolution] Automatically configuring webhook to: ${webhookUrl}`);
+      
+      const webhookRes = await fetch(`${apiUrl}/webhook/set/${instanceName}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': apiKey
+        },
+        body: JSON.stringify({
+          enabled: true,
+          url: webhookUrl,
+          webhookByEvents: false,
+          webhookBase64: false,
+          events: [
+            "MESSAGES_UPSERT",
+            "MESSAGES_UPDATE"
+          ]
+        })
+      });
+      
+      if (webhookRes.ok) {
+        console.log(`[Evolution] Webhook set successfully to ${webhookUrl}`);
+      } else {
+        const errText = await webhookRes.text();
+        console.error(`[Evolution] Failed to set webhook: ${errText}`);
+      }
+    } else {
+      console.warn(`[Evolution] Neither BACKEND_URL nor RAILWAY_STATIC_URL found in env. Webhook not set programmatically.`);
     }
   } catch (error) {
     console.error(`[Evolution] Error in ensureInstanceCreated:`, error);
