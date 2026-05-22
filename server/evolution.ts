@@ -74,14 +74,16 @@ export async function ensureInstanceCreated(): Promise<void> {
           'apikey': apiKey
         },
         body: JSON.stringify({
-          enabled: true,
-          url: webhookUrl,
-          webhookByEvents: false,
-          webhookBase64: false,
-          events: [
-            "MESSAGES_UPSERT",
-            "MESSAGES_UPDATE"
-          ]
+          webhook: {
+            enabled: true,
+            url: webhookUrl,
+            byEvents: false,
+            base64: false,
+            events: [
+              "MESSAGES_UPSERT",
+              "MESSAGES_UPDATE"
+            ]
+          }
         })
       });
       
@@ -165,12 +167,10 @@ export async function sendWhatsAppMessage(toPhone: string, text: string): Promis
       },
       body: JSON.stringify({
         number: recipient,
+        text: text,
         options: {
           delay: 1500,
           presence: 'composing'
-        },
-        textMessage: {
-          text: text
         }
       })
     });
