@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Anchor, Ship, CalendarCheck, Bot, MessageCircle, Shield, ShieldOff, Send, Image, CheckCircle, Clock, Landmark, Wallet, Users, Megaphone, Tag, Star } from 'lucide-react';
+import { Anchor, Ship, CalendarCheck, Bot, MessageCircle, Shield, ShieldOff, Send, Image, CheckCircle, Clock, Landmark, Wallet, Users, Megaphone, Tag, Star, AlertTriangle, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../components/AdminLayout';
 
@@ -12,6 +12,50 @@ export default function AICommandCenter() {
   const [activeTab, setActiveTab] = useState<'CHATS' | 'CAMPAIGNS'>('CHATS');
   const [loading, setLoading] = useState(true);
 
+  // Manual chat input state
+  const [typedMessage, setTypedMessage] = useState('');
+  const [sendingMessage, setSendingMessage] = useState(false);
+
+  // WhatsApp connection state
+  const [waState, setWaState] = useState<'open' | 'close' | 'connecting' | 'unknown'>('unknown');
+  const [qrCode, setQrCode] = useState<string | null>(null);
+  const [checkingWa, setCheckingWa] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Check WhatsApp connection state from our backend api
+  const checkWhatsAppConnection = async () => {
+    setCheckingWa(true);
+    setConnectionError(null);
+    try {
+      const res = await fetch('/api/whatsapp/connect');
+      if (res.ok) {
+        const data = await res.json();
+        setWaState(data.state);
+        if (data.state === 'open') {
+          setQrCode(null);
+          setConnectionError(null);
+        } else if (data.qr && data.qr.base64) {
+          setQrCode(data.qr.base64);
+          setConnectionError(null);
+        } else {
+          setQrCode(null);
+          setConnectionError('Evolution API offline ou inacessível. Verifique se o serviço está rodando e se a URL no .env está correta.');
+        }
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setConnectionError(data.error || 'Erro do servidor ao consultar o status do WhatsApp.');
+      }
+    } catch (error) {
+      console.error('Error checking WhatsApp connection:', error);
+      setConnectionError('Não foi possível conectar ao servidor backend (porta 3001). Certifique-se de que ele está rodando.');
+    } finally {
+      setCheckingWa(false);
+    }
+  };
+
+  // Fetch initial conversations and campaigns
   useEffect(() => {
     const fetchData = async () => {
       const { data: convData } = await supabase
@@ -34,11 +78,47 @@ export default function AICommandCenter() {
       setLoading(false);
     };
     fetchData();
+
+    checkWhatsAppConnection();
+    const waInterval = setInterval(() => {
+      checkWhatsAppConnection();
+    }, 15000); // Check every 15 seconds
+
+    return () => clearInterval(waInterval);
   }, []);
 
-  // Fetch messages when conversation changes
+  // Supabase Realtime subscription for ia_conversations
+  useEffect(() => {
+    const conversationsChannel = supabase
+      .channel('schema-db-changes-conversations')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'ia_conversations' },
+        (payload) => {
+          console.log('Realtime conversation change:', payload);
+          if (payload.eventType === 'INSERT') {
+            setConversations(prev => {
+              if (prev.some(c => c.id === payload.new.id)) return prev;
+              return [payload.new, ...prev];
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            setConversations(prev => prev.map(c => c.id === payload.new.id ? payload.new : c));
+          } else if (payload.eventType === 'DELETE') {
+            setConversations(prev => prev.filter(c => c.id !== payload.old.id));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(conversationsChannel);
+    };
+  }, []);
+
+  // Fetch messages and subscribe to Realtime for selected conversation
   useEffect(() => {
     if (!selectedConvId) return;
+
     const fetchMessages = async () => {
       const { data } = await supabase
         .from('ia_messages')
@@ -48,12 +128,78 @@ export default function AICommandCenter() {
       if (data) setMessages(data);
     };
     fetchMessages();
+
+    const messagesChannel = supabase
+      .channel(`messages-${selectedConvId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'ia_messages',
+          filter: `conversation_id=eq.${selectedConvId}`
+        },
+        (payload) => {
+          console.log('Realtime message insert:', payload);
+          setMessages(prev => {
+            if (prev.some(m => m.id === payload.new.id)) return prev;
+            return [...prev, payload.new];
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(messagesChannel);
+    };
   }, [selectedConvId]);
+
+  // Scroll to bottom when messages update
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   const handleTakeoverToggle = async (convId: string, currentStatus: string) => {
     const newStatus = currentStatus === 'AI_CONTROL' ? 'HUMAN_CONTROL' : 'AI_CONTROL';
-    await supabase.from('ia_conversations').update({ status: newStatus }).eq('id', convId);
-    setConversations(prev => prev.map(c => c.id === convId ? { ...c, status: newStatus } : c));
+    try {
+      const res = await fetch(`/api/conversations/${convId}/mode`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      });
+      if (!res.ok) throw new Error('Falha ao alterar o modo da conversa.');
+      const data = await res.json();
+      if (data.success) {
+        setConversations(prev => prev.map(c => c.id === convId ? data.conversation : c));
+      }
+    } catch (err: any) {
+      alert(err.message || 'Erro ao alterar modo da conversa.');
+    }
+  };
+
+  const handleSendMessage = async () => {
+    if (!selectedConvId || !typedMessage.trim() || sendingMessage) return;
+    setSendingMessage(true);
+    try {
+      const res = await fetch(`/api/conversations/${selectedConvId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: typedMessage })
+      });
+      if (!res.ok) throw new Error('Falha ao enviar a mensagem.');
+      const data = await res.json();
+      if (data.success) {
+        setTypedMessage('');
+        setMessages(prev => {
+          if (prev.some(m => m.id === data.message.id)) return prev;
+          return [...prev, data.message];
+        });
+      }
+    } catch (err: any) {
+      alert(err.message || 'Erro ao enviar mensagem.');
+    } finally {
+      setSendingMessage(false);
+    }
   };
 
   const handleApproveCampaign = async (campId: string) => {
@@ -75,11 +221,44 @@ export default function AICommandCenter() {
 
   const getSenderLabel = (sender: string) => {
     switch (sender) {
-      case 'IA': return '🤖 Assistente IA';
+      case 'IA': return '🤖 Lara (IA)';
       case 'ADMIN': return '👤 Você (Admin)';
       case 'CLIENT': return '💬 Cliente';
       case 'PARTNER': return '🤝 Parceiro';
       default: return sender;
+    }
+  };
+
+  const getWaStateBadge = () => {
+    switch (waState) {
+      case 'open':
+        return (
+          <span className="bg-emerald-500/10 text-emerald-400 text-xs px-3 py-1.5 rounded-lg border border-emerald-500/30 font-semibold flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            WhatsApp Online
+          </span>
+        );
+      case 'connecting':
+        return (
+          <span className="bg-amber-500/10 text-amber-400 text-xs px-3 py-1.5 rounded-lg border border-amber-500/30 font-semibold flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+            Conectando...
+          </span>
+        );
+      case 'close':
+        return (
+          <span className="bg-rose-500/10 text-rose-400 text-xs px-3 py-1.5 rounded-lg border border-rose-500/30 font-semibold flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-rose-500" />
+            WhatsApp Offline
+          </span>
+        );
+      default:
+        return (
+          <span className="bg-slate-800 text-slate-400 text-xs px-3 py-1.5 rounded-lg border border-slate-700 font-semibold flex items-center gap-1.5">
+            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            Verificando WhatsApp...
+          </span>
+        );
     }
   };
 
@@ -93,8 +272,21 @@ export default function AICommandCenter() {
         {/* Header */}
         <header className="bg-slate-900/50 backdrop-blur-md border-b border-slate-800 p-6 flex justify-between items-center shrink-0">
           <div>
-            <h1 className="text-2xl font-serif font-bold text-white flex items-center gap-2">Central de Monitoramento IA <Bot className="w-6 h-6 text-purple-400" /></h1>
+            <h1 className="text-2xl font-serif font-bold text-white flex items-center gap-2">
+              Central de Monitoramento IA <Bot className="w-6 h-6 text-purple-400 animate-pulse" />
+            </h1>
             <p className="text-sm text-gray-400">Supervisão de conversas e campanhas automáticas</p>
+          </div>
+          <div className="flex items-center gap-3">
+            {getWaStateBadge()}
+            <button 
+              onClick={checkWhatsAppConnection}
+              disabled={checkingWa}
+              className="p-1.5 text-gray-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors border border-slate-700"
+              title="Recarregar status do WhatsApp"
+            >
+              <RefreshCw className={`w-4 h-4 ${checkingWa ? 'animate-spin' : ''}`} />
+            </button>
           </div>
         </header>
 
@@ -119,103 +311,177 @@ export default function AICommandCenter() {
             {activeTab === 'CHATS' && (
               <div className="flex flex-1 overflow-hidden">
                 {/* Conversations List */}
-                <div className="w-80 bg-slate-900 border-r border-slate-800 overflow-y-auto shrink-0">
-                  <div className="p-4 border-b border-slate-800">
+                <div className="w-80 bg-slate-900 border-r border-slate-800 overflow-y-auto shrink-0 flex flex-col">
+                  <div className="p-4 border-b border-slate-800 shrink-0">
                     <p className="text-xs text-gray-500 uppercase font-bold tracking-widest">Conversas Ativas</p>
                   </div>
-                  {conversations.map(conv => (
-                    <button
-                      key={conv.id}
-                      onClick={() => setSelectedConvId(conv.id)}
-                      className={`w-full text-left p-4 border-b border-slate-800/50 transition-colors ${selectedConvId === conv.id ? 'bg-slate-800' : 'hover:bg-slate-800/40'}`}
-                    >
-                      <div className="flex justify-between items-start mb-1">
-                        <span className="font-bold text-white text-sm truncate pr-2">{conv.contact_name}</span>
-                        {conv.status === 'AI_CONTROL' ? (
-                          <span className="bg-purple-500/10 text-purple-400 text-[10px] px-1.5 py-0.5 rounded border border-purple-500/30 whitespace-nowrap flex items-center gap-1">
-                            <Bot className="w-3 h-3" /> IA
-                          </span>
-                        ) : (
-                          <span className="bg-yellow-500/10 text-yellow-500 text-[10px] px-1.5 py-0.5 rounded border border-yellow-500/30 whitespace-nowrap flex items-center gap-1">
-                            <Shield className="w-3 h-3" /> Humano
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-gray-500 truncate">{conv.subject}</p>
-                      <p className="text-[10px] text-gray-600 mt-1">
-                        {conv.contact_type === 'CLIENT' ? '💬 Cliente' : '🤝 Parceiro'} · {conv.contact_phone}
-                      </p>
-                    </button>
-                  ))}
+                  <div className="flex-1 overflow-y-auto">
+                    {conversations.map(conv => (
+                      <button
+                        key={conv.id}
+                        onClick={() => setSelectedConvId(conv.id)}
+                        className={`w-full text-left p-4 border-b border-slate-800/50 transition-colors ${selectedConvId === conv.id ? 'bg-slate-800' : 'hover:bg-slate-800/40'}`}
+                      >
+                        <div className="flex justify-between items-start mb-1">
+                          <span className="font-bold text-white text-sm truncate pr-2">{conv.contact_name}</span>
+                          {conv.status === 'AI_CONTROL' ? (
+                            <span className="bg-purple-500/10 text-purple-400 text-[10px] px-1.5 py-0.5 rounded border border-purple-500/30 whitespace-nowrap flex items-center gap-1 font-semibold">
+                              <Bot className="w-3 h-3" /> IA
+                            </span>
+                          ) : (
+                            <span className="bg-yellow-500/10 text-yellow-500 text-[10px] px-1.5 py-0.5 rounded border border-yellow-500/30 whitespace-nowrap flex items-center gap-1 font-semibold">
+                              <Shield className="w-3 h-3" /> Humano
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <p className="text-xs text-gray-400 truncate max-w-[65%]">{conv.subject}</p>
+                          <span className="text-[9px] text-purple-400/90 font-semibold uppercase">{conv.stage || 'novo'}</span>
+                        </div>
+                        <p className="text-[10px] text-gray-600 mt-1">
+                          {conv.contact_type === 'CLIENT' ? '💬 Cliente' : '🤝 Parceiro'} · {conv.contact_phone}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 {/* Chat View */}
-                <div className="flex-1 flex flex-col bg-slate-950">
+                <div className="flex-1 flex flex-col bg-slate-950 overflow-hidden">
+                  {/* WhatsApp Scan Banner if offline */}
+                  {waState !== 'open' && (
+                    <div className="bg-amber-950/40 border-b border-amber-500/30 p-4 flex flex-col md:flex-row items-center justify-between gap-4 shrink-0 transition-all">
+                      <div className="flex items-center gap-3">
+                        <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
+                        <div>
+                          <p className="text-sm font-bold text-white">WhatsApp Desconectado</p>
+                          <p className="text-xs text-gray-400">O atendente virtual Lara não poderá responder às mensagens até que você conecte o WhatsApp.</p>
+                          {connectionError && (
+                            <p className="text-xs text-rose-400 font-semibold mt-1 bg-rose-500/10 px-2 py-1 rounded border border-rose-500/20 max-w-md">
+                              {connectionError}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      {qrCode ? (
+                        <div className="flex flex-col items-center gap-1 bg-slate-900 p-2.5 rounded-xl border border-slate-800 shadow-lg">
+                          <img src={qrCode} alt="WhatsApp QR Code" className="w-32 h-32 rounded-lg bg-white p-1" />
+                          <span className="text-[9px] text-gray-400 uppercase font-semibold tracking-wider">Escaneie pelo aplicativo</span>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={checkWhatsAppConnection}
+                          disabled={checkingWa}
+                          className="bg-amber-500 hover:bg-amber-400 disabled:bg-slate-800 disabled:text-slate-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition-colors shrink-0 shadow-md shadow-amber-500/10"
+                        >
+                          {checkingWa ? 'Gerando...' : 'Gerar QR Code'}
+                        </button>
+                      )}
+                    </div>
+                  )}
+
                   {selectedConv ? (
                     <>
                       {/* Chat Header */}
                       <div className="p-4 border-b border-slate-800 bg-slate-900/50 flex justify-between items-center shrink-0">
                         <div>
-                          <p className="font-bold text-white">{selectedConv.contact_name}</p>
-                          <p className="text-xs text-gray-500">{selectedConv.subject}</p>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="font-bold text-white text-base">{selectedConv.contact_name}</p>
+                            
+                            {/* Negotiation Stage Badge */}
+                            <span className={`text-[9px] px-2 py-0.5 rounded-full border font-bold uppercase tracking-wider ${
+                              selectedConv.stage === 'concluido' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :
+                              selectedConv.stage === 'reservado' ? 'bg-green-500/10 text-green-400 border-green-500/30' :
+                              selectedConv.stage === 'pix_enviado' ? 'bg-blue-500/10 text-blue-400 border-blue-500/30' :
+                              selectedConv.stage === 'sinal_solicitado' ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30' :
+                              selectedConv.stage === 'cotado' ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30' :
+                              'bg-gray-500/10 text-gray-400 border-gray-500/30'
+                            }`}>
+                              Etapa: {selectedConv.stage || 'novo'}
+                            </span>
+
+                            {/* Trip Target Date */}
+                            {selectedConv.target_date && (
+                              <span className="text-[9px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full border border-slate-700 flex items-center gap-1 font-semibold">
+                                <CalendarCheck className="w-3.5 h-3.5 text-purple-400" />
+                                {new Date(selectedConv.target_date + 'T12:00:00').toLocaleDateString('pt-BR')}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-gray-500 mt-0.5">{selectedConv.subject} · {selectedConv.contact_phone}</p>
                         </div>
                         <button
                           onClick={() => handleTakeoverToggle(selectedConv.id, selectedConv.status)}
-                          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
+                          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md ${
                             selectedConv.status === 'AI_CONTROL'
-                              ? 'bg-yellow-500 hover:bg-yellow-400 text-slate-900 shadow-[0_0_15px_rgba(234,179,8,0.2)]'
-                              : 'bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 border border-purple-500/30'
+                              ? 'bg-yellow-500 hover:bg-yellow-400 text-slate-900 shadow-[0_0_15px_rgba(234,179,8,0.2)] border border-yellow-400/30'
+                              : 'bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 border border-purple-500/30'
                           }`}
                         >
                           {selectedConv.status === 'AI_CONTROL' ? (
-                            <><Shield className="w-4 h-4" /> Assumir Controle</>
+                            <><Shield className="w-4 h-4" /> Assumir Controle (Pausar Lara)</>
                           ) : (
-                            <><ShieldOff className="w-4 h-4" /> Devolver p/ IA</>
+                            <><ShieldOff className="w-4 h-4" /> Devolver p/ Lara (IA)</>
                           )}
                         </button>
                       </div>
 
-                      {/* Messages */}
+                      {/* Messages Area */}
                       <div className="flex-1 overflow-y-auto p-6 space-y-4">
                         {messages.map(msg => (
-                          <div key={msg.id} className={`max-w-[70%] rounded-2xl p-4 border ${getSenderStyle(msg.sender)}`}>
-                            <div className="flex justify-between items-center mb-2">
+                          <div key={msg.id} className={`max-w-[75%] rounded-2xl p-4 border transition-all ${getSenderStyle(msg.sender)}`}>
+                            <div className="flex justify-between items-center mb-2 gap-4">
                               <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
                                 {getSenderLabel(msg.sender)}
                               </span>
-                              <span className="text-[10px] text-gray-600">{formatTime(msg.created_at)}</span>
+                              <span className="text-[9px] text-gray-500 font-medium">{formatTime(msg.created_at)}</span>
                             </div>
-                            <p className="text-sm text-gray-200 leading-relaxed">{msg.content}</p>
+                            <p className="text-sm text-gray-100 leading-relaxed whitespace-pre-line">{msg.content}</p>
                           </div>
                         ))}
+                        <div ref={messagesEndRef} />
                       </div>
 
-                      {/* Input */}
-                      {selectedConv.status === 'HUMAN_CONTROL' && (
+                      {/* Footer Message Input Controls */}
+                      {selectedConv.status === 'HUMAN_CONTROL' ? (
                         <div className="p-4 border-t border-slate-800 bg-slate-900/50 shrink-0">
                           <div className="flex gap-3">
                             <input
                               type="text"
-                              placeholder="Digite sua mensagem como Admin..."
-                              className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:border-yellow-500 focus:outline-none transition-colors"
+                              value={typedMessage}
+                              onChange={(e) => setTypedMessage(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSendMessage();
+                              }}
+                              placeholder="Digite sua mensagem e pressione Enter..."
+                              disabled={sendingMessage}
+                              className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:border-yellow-500 focus:outline-none transition-colors disabled:opacity-50"
                             />
-                            <button className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 font-bold px-5 py-3 rounded-xl transition-colors flex items-center gap-2 text-sm shadow-[0_0_15px_rgba(234,179,8,0.2)]">
-                              <Send className="w-4 h-4" /> Enviar
+                            <button
+                              onClick={handleSendMessage}
+                              disabled={sendingMessage || !typedMessage.trim()}
+                              className="bg-yellow-500 hover:bg-yellow-400 disabled:bg-slate-800 disabled:text-slate-600 text-slate-900 font-bold px-5 py-3 rounded-xl transition-all flex items-center gap-2 text-sm shadow-[0_0_15px_rgba(234,179,8,0.1)] shrink-0"
+                            >
+                              <Send className="w-4 h-4" /> {sendingMessage ? 'Enviando...' : 'Enviar'}
                             </button>
                           </div>
-                          <p className="text-[10px] text-gray-600 mt-2">⚠️ Você está em controle manual. A IA está pausada neste chat.</p>
+                          <p className="text-[10px] text-yellow-500 mt-2 font-medium flex items-center gap-1">
+                            <AlertTriangle className="w-3.5 h-3.5" /> Controle Manual Ativo. Lara está em modo silencioso e não responderá a este cliente.
+                          </p>
                         </div>
-                      )}
-                      {selectedConv.status === 'AI_CONTROL' && (
+                      ) : (
                         <div className="p-4 border-t border-slate-800 bg-purple-500/5 text-center shrink-0">
-                          <p className="text-xs text-purple-400 flex items-center justify-center gap-2">
-                            <Bot className="w-4 h-4 animate-pulse" /> A Inteligência Artificial está conduzindo esta conversa automaticamente.
+                          <p className="text-xs text-purple-400 flex items-center justify-center gap-2 font-semibold">
+                            <Bot className="w-4 h-4 animate-pulse text-purple-400" /> A Lara está conduzindo esta conversa de forma 100% autônoma.
                           </p>
                         </div>
                       )}
                     </>
                   ) : (
-                    <div className="flex-1 flex items-center justify-center text-gray-600">Selecione uma conversa</div>
+                    <div className="flex-1 flex flex-col items-center justify-center text-gray-500 gap-2">
+                      <Bot className="w-12 h-12 text-gray-700 animate-bounce" />
+                      <p className="text-sm">Selecione uma conversa ao lado para visualizar e gerenciar</p>
+                    </div>
                   )}
                 </div>
               </div>
@@ -244,10 +510,10 @@ export default function AICommandCenter() {
                         <div className="flex justify-between items-start mb-3">
                           <h3 className="text-white font-bold text-sm">{camp.title}</h3>
                           {camp.status === 'DRAFT' && (
-                            <span className="bg-yellow-500/10 text-yellow-500 text-[10px] px-2 py-0.5 rounded border border-yellow-500/30 shrink-0">Pendente</span>
+                            <span className="bg-yellow-500/10 text-yellow-500 text-[10px] px-2 py-0.5 rounded border border-yellow-500/30 shrink-0 font-semibold">Pendente</span>
                           )}
                           {camp.status === 'APPROVED' && (
-                            <span className="bg-green-500/10 text-green-500 text-[10px] px-2 py-0.5 rounded border border-green-500/30 shrink-0 flex items-center gap-1"><CheckCircle className="w-3 h-3"/> Aprovado</span>
+                            <span className="bg-green-500/10 text-green-500 text-[10px] px-2 py-0.5 rounded border border-green-500/30 shrink-0 flex items-center gap-1 font-semibold"><CheckCircle className="w-3 h-3"/> Aprovado</span>
                           )}
                         </div>
 
@@ -256,7 +522,7 @@ export default function AICommandCenter() {
                         {/* Target Tags */}
                         <div className="flex flex-wrap gap-2 mb-4">
                           {camp.target_tags?.map((tag: string, i: number) => (
-                            <span key={i} className="text-[10px] text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20 flex items-center gap-1">
+                            <span key={i} className="text-[10px] text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20 flex items-center gap-1 font-medium">
                               <Tag className="w-3 h-3" /> {tag}
                             </span>
                           ))}
@@ -272,7 +538,7 @@ export default function AICommandCenter() {
                           </button>
                         )}
                         {camp.status === 'APPROVED' && (
-                          <div className="text-center text-xs text-green-500/60 py-2">
+                          <div className="text-center text-xs text-green-500/60 py-2 font-medium">
                             ✅ Campanha aprovada em {camp.approved_at ? new Date(camp.approved_at).toLocaleDateString('pt-BR') : 'agora'}
                           </div>
                         )}
