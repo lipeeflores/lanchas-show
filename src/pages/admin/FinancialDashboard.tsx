@@ -20,7 +20,7 @@ export default function FinancialDashboard() {
 
   const [allTxData, setAllTxData] = useState<any[]>([]);
   const [allResData, setAllResData] = useState<any[]>([]);
-  const [selectedMonth, setSelectedMonth] = useState(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`);
+  const [selectedMonth, setSelectedMonth] = useState('all');
 
   useEffect(() => {
     const fetchFinance = async () => {
@@ -210,6 +210,7 @@ export default function FinancialDashboard() {
             >
               <option value="all">Todo o Período</option>
               {Array.from(new Set([
+                `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`,
                 ...allTxData.map(tx => tx.created_at.substring(0, 7)),
                 ...allResData.map(r => r.created_at.substring(0, 7))
               ])).sort((a, b) => b.localeCompare(a)).map(m => (
