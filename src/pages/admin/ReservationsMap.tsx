@@ -35,6 +35,7 @@ export default function ReservationsMap() {
     destination: '',
     base_price: 0,
     paid_amount: 0,
+    previous_paid_amount: 0,
     commission_value: 0,
     floating_mat: 'none', // none, paid, courtesy
     extra_hours: 0,
@@ -206,13 +207,34 @@ export default function ReservationsMap() {
       total_price: total // legacy support
     };
 
-    const { error } = formData.id
-      ? await supabase.from('reservations').update(payload).eq('id', formData.id)
-      : await supabase.from('reservations').insert([payload]);
-    if (error) {
-      console.error('Erro ao salvar reserva:', error);
-      alert('Erro ao salvar reserva: ' + error.message);
+    const isUpdate = !!formData.id;
+    let reservationId = formData.id;
+    let resError = null;
+
+    if (isUpdate) {
+      const { error } = await supabase.from('reservations').update(payload).eq('id', formData.id);
+      resError = error;
     } else {
+      const { data, error } = await supabase.from('reservations').insert([payload]).select('id').single();
+      if (data) reservationId = data.id;
+      resError = error;
+    }
+
+    if (resError) {
+      console.error('Erro ao salvar reserva:', resError);
+      alert('Erro ao salvar reserva: ' + resError.message);
+    } else {
+      const paidDelta = Number(formData.paid_amount) - Number(formData.previous_paid_amount);
+      if (paidDelta > 0) {
+          const boatName = boats.find(b => b.id === formData.boat_id)?.name || 'Lancha';
+          await supabase.from('cash_transactions').insert([{
+              type: 'INCOME',
+              amount: paidDelta,
+              description: `[RESERVA] Pagamento: ${boatName} — Cliente: ${formData.customer_name}`,
+              reservation_id: reservationId || null
+          }]);
+      }
+
       await fetchBoatsAndReservations();
       setIsModalOpen(false);
     }
@@ -254,6 +276,7 @@ export default function ReservationsMap() {
       destination: '',
       base_price: 0,
       paid_amount: 0,
+      previous_paid_amount: 0,
       commission_value: 0,
       floating_mat: 'none',
       extra_hours: 0,
@@ -277,6 +300,7 @@ export default function ReservationsMap() {
       destination: res.destination || '',
       base_price: res.base_price_closed || 0,
       paid_amount: res.paid_amount || 0,
+      previous_paid_amount: res.paid_amount || 0,
       commission_value: res.commission_value || 0,
       floating_mat: res.floating_mat_status || 'none',
       extra_hours: res.extra_hours_qty || 0,

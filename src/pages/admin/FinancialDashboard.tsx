@@ -18,79 +18,126 @@ export default function FinancialDashboard() {
   const [monthlyData, setMonthlyData] = useState<any[]>([]);
   const [expenseBreakdown, setExpenseBreakdown] = useState<any[]>([]);
 
+  const [allTxData, setAllTxData] = useState<any[]>([]);
+  const [allResData, setAllResData] = useState<any[]>([]);
+  const [selectedMonth, setSelectedMonth] = useState(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`);
+
   useEffect(() => {
     const fetchFinance = async () => {
       const { data: txData } = await supabase.from('cash_transactions').select('*').order('created_at', { ascending: false });
-
       const { data: resData } = await supabase.from('reservations').select('*, boats(*), customers(full_name)');
-      if(resData) {
-        let rb = 0, cs = 0, lp = 0;
-        const boatCount: Record<string, {name: string, rentals: number, rev: number}> = {};
-        const monthly: Record<string, {month: string, receita: number, despesa: number}> = {};
+      if(txData) setAllTxData(txData);
+      if(resData) setAllResData(resData);
+      setLoading(false);
+    };
+    fetchFinance();
+  }, []);
 
-        // Build unified ledger: reservations as INCOME
-        const ledger: any[] = [];
+  useEffect(() => {
+    if (loading) return;
 
-        resData.forEach(r => {
-          const b = r.boats;
-          if(!b) return;
-          if(!boatCount[b.id]) boatCount[b.id] = { name: b.name, rentals: 0, rev: 0 };
-          boatCount[b.id].rentals += 1;
-          const opCost = Number(b.original_rate || 0);
+    let txData = allTxData;
+    let resData = allResData;
 
-          const d = new Date(r.created_at);
-          const mk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-          const ml = d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' });
-          if(!monthly[mk]) monthly[mk] = { month: ml, receita: 0, despesa: 0 };
+    const monthly: Record<string, {month: string, receita: number, despesa: number}> = {};
+    // Calculate full monthly history for the Area Chart
+    allResData.forEach(r => {
+        const b = r.boats;
+        if(!b) return;
+        const opCost = Number(b.original_rate || 0);
+        const d = new Date(r.created_at);
+        const mk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+        const ml = d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' });
+        if(!monthly[mk]) monthly[mk] = { month: ml, receita: 0, despesa: 0 };
+        
+        if(b.owner_type === 'OWN') {
+          monthly[mk].receita += Number(r.total_price);
+          monthly[mk].despesa += opCost;
+        } else {
+          const diff = Number(r.total_price) - Number(b.partner_net_value || 0) - opCost;
+          monthly[mk].receita += diff;
+          monthly[mk].despesa += opCost;
+        }
+    });
 
-          // Add to ledger as INCOME
-          const clientName = r.customers?.full_name || 'Cliente';
-          ledger.push({
-            id: 'res-' + r.id,
-            type: 'INCOME',
-            amount: Number(r.total_price),
-            description: `Locação ${b.name} — ${clientName}`,
-            created_at: r.created_at
-          });
+    allTxData.filter(tx => tx.type === 'EXPENSE').forEach(tx => {
+        const d = new Date(tx.created_at);
+        const mk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+        const ml = d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' });
+        if(!monthly[mk]) monthly[mk] = { month: ml, receita: 0, despesa: 0 };
+        monthly[mk].despesa += Number(tx.amount);
+    });
 
-          // Add departure cost (original_rate) as EXPENSE in ledger automatically
-          if(opCost > 0) {
+    setMonthlyData(Object.entries(monthly).sort(([a],[b]) => a.localeCompare(b)).map(([,v]) => v));
+
+    // Filter by selected period for KPIs, DRE and Ledger
+    if (selectedMonth !== 'all') {
+        txData = txData.filter(tx => tx.created_at.startsWith(selectedMonth));
+        resData = resData.filter(r => r.created_at.startsWith(selectedMonth));
+    }
+
+    let rb = 0, cs = 0, lp = 0;
+    const boatCount: Record<string, {name: string, rentals: number, rev: number}> = {};
+    const ledger: any[] = [];
+    const expCat: Record<string, number> = {};
+    let de = 0;
+
+    resData.forEach(r => {
+        const b = r.boats;
+        if(!b) return;
+        if(!boatCount[b.id]) boatCount[b.id] = { name: b.name, rentals: 0, rev: 0 };
+        boatCount[b.id].rentals += 1;
+        const opCost = Number(b.original_rate || 0);
+
+        // Competence (DRE) totals
+        if(b.owner_type === 'OWN') {
+          rb += Number(r.total_price);
+          cs += opCost;
+          boatCount[b.id].rev += Number(r.total_price);
+        } else {
+          const diff = Number(r.total_price) - Number(b.partner_net_value || 0) - opCost;
+          lp += diff;
+          boatCount[b.id].rev += diff;
+        }
+
+        const clientName = r.customers?.full_name || 'Cliente';
+
+        // Add synthetic INCOME to ledger ONLY if there is no real INCOME from this reservation in cash_transactions
+        const hasRealIncome = allTxData.some(tx => tx.reservation_id === r.id && tx.type === 'INCOME');
+        if (!hasRealIncome) {
             ledger.push({
-              id: 'cost-' + r.id,
-              type: 'EXPENSE',
-              amount: opCost,
-              description: `Custo de Saída ${b.name} — ${clientName}`,
+              id: 'res-' + r.id,
+              type: 'INCOME',
+              amount: Number(r.total_price),
+              description: `[RESERVA] (Retroativo) ${b.name} — ${clientName}`,
               created_at: r.created_at
             });
-            monthly[mk].despesa += opCost;
-          }
+        }
 
-          if(b.owner_type === 'OWN') {
-            rb += Number(r.total_price);
-            cs += opCost;
-            boatCount[b.id].rev += Number(r.total_price);
-            monthly[mk].receita += Number(r.total_price);
-          } else {
-            const diff = Number(r.total_price) - Number(b.partner_net_value || 0) - opCost;
-            lp += diff;
-            boatCount[b.id].rev += diff;
-            monthly[mk].receita += diff;
-          }
-        });
+        // Add synthetic departure cost
+        if(opCost > 0) {
+          ledger.push({
+            id: 'cost-' + r.id,
+            type: 'EXPENSE',
+            amount: opCost,
+            description: `Custo de Saída ${b.name} — ${clientName}`,
+            created_at: r.created_at
+          });
+        }
+    });
 
-        let de = 0;
-        const expCat: Record<string, number> = {};
-        if(txData) {
-          txData.filter(tx => tx.type === 'EXPENSE').forEach(tx => {
+    txData.forEach(tx => {
+        if (tx.type === 'EXPENSE') {
             de += Number(tx.amount);
             const desc = (tx.description || '').toLowerCase();
             let cat = 'Outros';
-            if(desc.includes('fixo') || desc.includes('fixa')) cat = 'Despesas Fixas';
-            else if(desc.includes('combustível') || desc.includes('combustivel') || desc.includes('variável') || desc.includes('variavel')) cat = 'Despesas Variáveis';
-            else if(desc.includes('geral')) cat = 'Contas Gerais';
+            if(desc.includes('[fixo]') || desc.includes('fixo') || desc.includes('fixa')) cat = 'Despesas Fixas';
+            else if(desc.includes('[variável]') || desc.includes('combustível') || desc.includes('variável')) cat = 'Despesas Variáveis';
+            else if(desc.includes('[geral]') || desc.includes('geral')) cat = 'Contas Gerais';
+            else if(desc.includes('[parceiro]')) cat = 'Repasse Parceiros';
+            
             expCat[cat] = (expCat[cat] || 0) + Number(tx.amount);
 
-            // Add expenses to ledger
             ledger.push({
               id: tx.id,
               type: 'EXPENSE',
@@ -98,38 +145,32 @@ export default function FinancialDashboard() {
               description: tx.description,
               created_at: tx.created_at
             });
-          });
-
-          txData.filter(tx => tx.type === 'EXPENSE').forEach(tx => {
-            const d = new Date(tx.created_at);
-            const mk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-            const ml = d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' });
-            if(!monthly[mk]) monthly[mk] = { month: ml, receita: 0, despesa: 0 };
-            monthly[mk].despesa += Number(tx.amount);
-          });
+        } else if (tx.type === 'INCOME') {
+            ledger.push({
+              id: tx.id,
+              type: 'INCOME',
+              amount: Number(tx.amount),
+              description: tx.description,
+              created_at: tx.created_at
+            });
         }
+    });
 
-        // Sort ledger by date desc
-        ledger.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-        setLedgerEntries(ledger);
+    ledger.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    setLedgerEntries(ledger);
 
-        setReceitaBruta(rb);
-        setCustosSaida(cs);
-        setDespesasOperacionais(de);
-        setLucroIntermediacao(lp);
-        setRanking(Object.values(boatCount).sort((a,b) => b.rev - a.rev).slice(0,5));
-        setMonthlyData(Object.entries(monthly).sort(([a],[b]) => a.localeCompare(b)).map(([,v]) => v));
-        // Include departure costs in expense breakdown for pie chart
-        if(cs > 0) {
-          expCat['Custos de Saída'] = (expCat['Custos de Saída'] || 0) + cs;
-        }
-        setExpenseBreakdown(Object.entries(expCat).map(([name, value]) => ({ name, value })));
-      }
-      
-      setLoading(false);
-    };
-    fetchFinance();
-  }, []);
+    setReceitaBruta(rb);
+    setCustosSaida(cs);
+    setDespesasOperacionais(de);
+    setLucroIntermediacao(lp);
+    setRanking(Object.values(boatCount).sort((a,b) => b.rev - a.rev).slice(0,5));
+    
+    if(cs > 0) {
+      expCat['Custos de Saída'] = (expCat['Custos de Saída'] || 0) + cs;
+    }
+    setExpenseBreakdown(Object.entries(expCat).map(([name, value]) => ({ name, value })));
+
+  }, [allTxData, allResData, loading, selectedMonth]);
 
   const fmt = (val: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(val || 0);
   const fmtFull = (val: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val || 0);
@@ -160,6 +201,21 @@ export default function FinancialDashboard() {
           <div>
             <h1 className="text-2xl font-serif font-bold text-white">DRE & Balanço Financeiro</h1>
             <p className="text-sm text-gray-400">Demonstração do Resultado do Exercício e Fluxo de Caixa</p>
+          </div>
+          <div>
+            <select
+              value={selectedMonth}
+              onChange={e => setSelectedMonth(e.target.value)}
+              className="bg-slate-950 border border-slate-800 text-white text-sm rounded-lg px-4 py-2 outline-none focus:border-yellow-500 transition-colors"
+            >
+              <option value="all">Todo o Período</option>
+              {Array.from(new Set([
+                ...allTxData.map(tx => tx.created_at.substring(0, 7)),
+                ...allResData.map(r => r.created_at.substring(0, 7))
+              ])).sort((a, b) => b.localeCompare(a)).map(m => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
           </div>
         </header>
 

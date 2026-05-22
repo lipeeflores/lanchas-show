@@ -130,7 +130,7 @@ export default function Dashboard() {
 
   const handleMarkExpensePaid = async (exp: any) => {
       try {
-          await supabase.from('accounts_payable').insert([{
+          const { error: err1 } = await supabase.from('accounts_payable').insert([{
               amount: exp.amount,
               description: `Pagamento Fixo: ${exp.description}`,
               status: 'PAID',
@@ -138,12 +138,14 @@ export default function Dashboard() {
               boat_expense_id: exp.id,
               payee_type: 'EXTERNAL'
           }]);
+          if (err1) throw err1;
           
-          await supabase.from('cash_transactions').insert([{
+          const { error: err2 } = await supabase.from('cash_transactions').insert([{
               type: 'EXPENSE',
               amount: exp.amount,
-              description: `Fixo: ${exp.description} (${exp.boats?.name})`
+              description: `[FIXO] ${exp.description} (${exp.boats?.name || 'Geral'})`
           }]);
+          if (err2) throw err2;
           
           setPendingFixedExpenses(prev => prev.filter(p => p.id !== exp.id));
       } catch (err: any) {

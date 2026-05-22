@@ -219,11 +219,23 @@ export default function FleetManagement() {
 
   const handleMarkAsPaid = async (id: string) => {
     try {
+      const payable = payables.find(p => p.id === id);
+      if (!payable) throw new Error("Conta não encontrada");
+
       const { error } = await supabase
         .from('accounts_payable')
         .update({ status: 'PAID' })
         .eq('id', id);
       if (error) throw error;
+
+      const prefix = payable.payee_type === 'PARTNER' ? '[PARCEIRO]' : '[GERAL]';
+      const { error: txError } = await supabase.from('cash_transactions').insert([{
+        type: 'EXPENSE',
+        amount: Number(payable.amount),
+        description: `${prefix} ${payable.description}`
+      }]);
+      if (txError) throw txError;
+
       fetchData();
     } catch (error: any) {
       alert('Erro ao dar baixa: ' + error.message);
@@ -317,11 +329,12 @@ export default function FleetManagement() {
       if (error) throw error;
 
       // Register in cash_transactions for DRE
-      await supabase.from('cash_transactions').insert([{
+      const { error: txError } = await supabase.from('cash_transactions').insert([{
         type: 'EXPENSE',
         amount: Number(payableFormData.amount),
-        description: `Geral: ${payableFormData.description}`
+        description: `[GERAL] ${payableFormData.description}`
       }]);
+      if (txError) throw txError;
 
       setIsPayableModalOpen(false);
       fetchData();
@@ -353,11 +366,12 @@ export default function FleetManagement() {
       if (error) throw error;
 
       if (expenseFormData.type === 'VARIABLE') {
-          await supabase.from('cash_transactions').insert([{
+          const { error: txError } = await supabase.from('cash_transactions').insert([{
               type: 'EXPENSE',
               amount: Number(expenseFormData.amount),
-              description: `Variável: ${expenseFormData.description} (${expenseFormData.boat_name})`
+              description: `[VARIÁVEL] ${expenseFormData.description} (${expenseFormData.boat_name})`
           }]);
+          if (txError) throw txError;
       }
       
       setIsExpenseModalOpen(false);
