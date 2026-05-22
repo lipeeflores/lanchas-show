@@ -8,7 +8,7 @@ const groqApiKey = process.env.GROQ_API_KEY;
 if (!groqApiKey) {
   console.warn('[Warning] GROQ_API_KEY não definida nas variáveis de ambiente.');
 }
-const groqModel = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+const groqModel = process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
 
 // Lara System Prompt Configuration
 const LARA_SYSTEM_PROMPT = `Você é Lara, assistente virtual da Lanchas Show, empresa de aluguel de lanchas em Porto Belo - SC. Você atende leads pelo WhatsApp com simpatia, naturalidade e foco em fechar reservas.
