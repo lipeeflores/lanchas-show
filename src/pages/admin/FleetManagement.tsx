@@ -477,22 +477,22 @@ export default function FleetManagement() {
           </button>
         </header>
 
-        <div className="border-b border-slate-800 px-6 pt-4 bg-slate-900/30 flex gap-6">
+        <div className="border-b border-slate-800 px-6 pt-4 bg-slate-900/30 flex gap-6 overflow-x-auto whitespace-nowrap scrollbar-hide">
            <button 
              onClick={() => setActiveTab('OWN')}
-             className={`pb-4 text-sm font-bold uppercase tracking-wider transition-colors border-b-2 ${activeTab === 'OWN' ? 'border-yellow-500 text-yellow-500' : 'border-transparent text-gray-500 hover:text-gray-300'}`}
+             className={`pb-4 text-sm font-bold uppercase tracking-wider transition-colors border-b-2 shrink-0 ${activeTab === 'OWN' ? 'border-yellow-500 text-yellow-500' : 'border-transparent text-gray-500 hover:text-gray-300'}`}
            >
               Frota Própria
            </button>
            <button 
              onClick={() => setActiveTab('PARTNERS')}
-             className={`pb-4 text-sm font-bold uppercase tracking-wider transition-colors border-b-2 ${activeTab === 'PARTNERS' ? 'border-yellow-500 text-yellow-500' : 'border-transparent text-gray-500 hover:text-gray-300'}`}
+             className={`pb-4 text-sm font-bold uppercase tracking-wider transition-colors border-b-2 shrink-0 ${activeTab === 'PARTNERS' ? 'border-yellow-500 text-yellow-500' : 'border-transparent text-gray-500 hover:text-gray-300'}`}
            >
               Frota Parceira
            </button>
            <button 
              onClick={() => setActiveTab('PAYABLES')}
-             className={`pb-4 text-sm font-bold uppercase tracking-wider transition-colors border-b-2 flex items-center gap-2 ${activeTab === 'PAYABLES' ? 'border-yellow-500 text-yellow-500' : 'border-transparent text-gray-500 hover:text-gray-300'}`}
+             className={`pb-4 text-sm font-bold uppercase tracking-wider transition-colors border-b-2 flex items-center gap-2 shrink-0 ${activeTab === 'PAYABLES' ? 'border-yellow-500 text-yellow-500' : 'border-transparent text-gray-500 hover:text-gray-300'}`}
            >
               Contas a Pagar
               {payables.filter(p => p.status === 'PENDING').length > 0 && (
@@ -501,7 +501,7 @@ export default function FleetManagement() {
            </button>
            <button 
              onClick={() => setActiveTab('OWNERS')}
-             className={`pb-4 text-sm font-bold uppercase tracking-wider transition-colors border-b-2 flex items-center gap-2 ${activeTab === 'OWNERS' ? 'border-yellow-500 text-yellow-500' : 'border-transparent text-gray-500 hover:text-gray-300'}`}
+             className={`pb-4 text-sm font-bold uppercase tracking-wider transition-colors border-b-2 flex items-center gap-2 shrink-0 ${activeTab === 'OWNERS' ? 'border-yellow-500 text-yellow-500' : 'border-transparent text-gray-500 hover:text-gray-300'}`}
            >
               Donos / Parceiros
               <span className="bg-slate-700 text-gray-300 text-[10px] px-2 py-0.5 rounded-full">{allPartners.length}</span>
@@ -536,7 +536,7 @@ export default function FleetManagement() {
                               </button>
                            </div>
 
-                           <div className="grid grid-cols-3 gap-4 border-t border-slate-800 pt-6">
+                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 border-t border-slate-800 pt-6">
                               <div>
                                  <p className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">Despesas Fixas</p>
                                  <p className="text-2xl font-bold text-slate-300 mb-1">{formatCurrency(totalFixed)}</p>
@@ -607,7 +607,7 @@ export default function FleetManagement() {
                            </div>
 
                            {/* Dados Financeiros */}
-                           <div className="grid grid-cols-3 gap-4 mb-6">
+                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
                               <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
                                  <p className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1 flex items-center gap-1">Venda B2C <span title="Dinâmico (Alta Temporada)" className="text-yellow-500 cursor-help">⚡</span></p>
                                  <p className="text-lg font-bold text-white">{formatCurrency(salePrice)}</p>
@@ -663,7 +663,8 @@ export default function FleetManagement() {
                     {payables.filter(p => p.payee_type === 'EXTERNAL').length === 0 ? (
                         <div className="p-10 text-center text-gray-500 italic">Nenhum gasto geral lançado ainda.</div>
                     ) : ( 
-                        <table className="w-full text-left border-collapse">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse min-w-[650px]">
                             <thead>
                                 <tr className="bg-slate-950 border-b border-slate-800 text-xs uppercase tracking-wider text-gray-500">
                                     <th className="p-4 font-medium">Data</th>
@@ -697,6 +698,7 @@ export default function FleetManagement() {
                                 ))}
                             </tbody>
                         </table>
+                      </div>
                     )}
                   </div>
                     
@@ -711,7 +713,8 @@ export default function FleetManagement() {
                     {allBoatExpenses.length === 0 ? (
                         <div className="p-10 text-center text-gray-500 italic">Nenhuma despesa de embarcação cadastrada.</div>
                     ) : ( 
-                        <table className="w-full text-left border-collapse">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse min-w-[650px]">
                             <thead>
                                 <tr className="bg-slate-950 border-b border-slate-800 text-xs uppercase tracking-wider text-gray-500">
                                     <th className="p-4 font-medium">Data / Vencimento</th>
@@ -765,6 +768,7 @@ export default function FleetManagement() {
                                 ))}
                             </tbody>
                         </table>
+                      </div>
                     )}
                   </div>
                   </div>
@@ -945,7 +949,7 @@ export default function FleetManagement() {
                               <><Upload className="w-6 h-6 text-gray-500 mb-2" /><p className="text-xs text-gray-400">Arraste fotos aqui ou <span className="text-yellow-500 font-bold">clique para escolher</span></p><p className="text-[10px] text-gray-600 mt-1">JPG, PNG ou WEBP • Máx. 10MB por foto</p></>
                             )}
                           </div>
-                          <p className="text-[10px] text-gray-600 mt-2">A primeira foto será usada como capa no site.</p>
+                          <p className="text-[10px] text-gray-600 mt-1">A primeira foto será usada como capa no site.</p>
                         </div>
 
                         <div>
@@ -1008,7 +1012,7 @@ export default function FleetManagement() {
                                     </div>
                                     <button type="button" onClick={() => removeRoute(idx)} className="text-gray-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"><Trash2 className="w-4 h-4" /></button>
                                   </div>
-                                  <div className="grid grid-cols-3 gap-3">
+                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                     <div className="space-y-1">
                                       <label className="text-[10px] text-gray-500 uppercase font-bold">Alta Temp.</label>
                                       <input type="number" value={route.price_high_season} onChange={e => { const nr = [...boatRoutes]; nr[idx] = {...nr[idx], price_high_season: Number(e.target.value)}; setBoatRoutes(nr); }} className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-white text-xs focus:border-yellow-500 focus:outline-none" />
@@ -1049,7 +1053,7 @@ export default function FleetManagement() {
                                   </select>
                                 </div>
                               </div>
-                              <div className="grid grid-cols-3 gap-3">
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                 <div className="space-y-1">
                                   <label className="text-[10px] text-gray-500 uppercase font-bold">Alta R$</label>
                                   <input type="number" value={routeForm.price_high_season} onChange={e => setRouteForm({...routeForm, price_high_season: Number(e.target.value)})} className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-white text-xs" />

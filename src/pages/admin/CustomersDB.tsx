@@ -148,68 +148,70 @@ export default function CustomersDB() {
              )}
 
              <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl overflow-hidden">
-                 <table className="w-full text-left">
-                     <thead className="bg-slate-950/80">
-                         <tr>
-                             <th className="p-4 text-xs font-bold uppercase tracking-wider text-gray-500">Nome do Contratante</th>
-                             <th className="p-4 text-xs font-bold uppercase tracking-wider text-gray-500">Contato</th>
-                             <th className="p-4 text-xs font-bold uppercase tracking-wider text-gray-500">Voluma de Loc.</th>
-                             <th className="p-4 text-xs font-bold uppercase tracking-wider text-gray-500">Ticket Gasto (LTV)</th>
-                             <th className="p-4 text-xs font-bold uppercase tracking-wider text-gray-500">Tags IA / Comportamento</th>
-                             <th className="p-4 text-xs font-bold uppercase tracking-wider text-gray-500 text-right">Ações</th>
-                         </tr>
-                     </thead>
-                     <tbody className="divide-y divide-slate-800/50">
-                         {customers.map(c => (
-                             <tr key={c.id} className="hover:bg-slate-800/30 transition-colors">
-                                 <td className="p-4">
-                                     <div className="flex items-center gap-2">
-                                       <p className="text-sm font-bold text-white">{c.full_name}</p>
-                                       {c.rating_stars ? (
-                                         <span className="text-yellow-500 text-xs font-bold whitespace-nowrap">
-                                           {'★'.repeat(c.rating_stars)}{'☆'.repeat(5 - c.rating_stars)}
-                                         </span>
-                                       ) : null}
-                                     </div>
-                                     <p className="text-xs text-gray-500">Desde {new Date(c.created_at).getFullYear()}</p>
-                                     {c.rating_notes && (
-                                       <p className="text-xs text-gray-400 italic mt-1 font-medium bg-slate-950/40 px-2 py-1 rounded border border-slate-800/40 inline-block">
-                                         "{c.rating_notes}"
-                                       </p>
-                                     )}
-                                 </td>
-                                 <td className="p-4">
-                                     <p className="text-sm text-gray-300">{c.phone || '-'}</p>
-                                     <p className="text-xs text-gray-500">{c.email}</p>
-                                 </td>
-                                 <td className="p-4">
-                                     <span className="bg-slate-800 text-gray-300 text-xs font-bold px-3 py-1 rounded inline-block border border-slate-700">
-                                         {c.rentals} vezes
-                                     </span>
-                                 </td>
-                                 <td className="p-4">
-                                     <p className="text-sm font-bold text-yellow-500">
-                                        {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(c.ltv)}
-                                     </p>
-                                 </td>
-                                 <td className="p-4">
-                                     <div className="flex flex-wrap gap-2">
-                                         {(c.tags || []).map((tag:string, i:number) => (
-                                             <span key={i} className={`text-[10px] uppercase font-medium px-2 py-1 rounded border flex items-center gap-1 ${getTagStyle(tag)}`}>
-                                                <Tag className="w-3 h-3" /> {tag}
-                                             </span>
-                                         ))}
-                                     </div>
-                                 </td>
-                                 <td className="p-4 text-right">
-                                     <button onClick={() => handleEdit(c)} className="text-yellow-500 hover:text-yellow-400 text-xs font-bold transition-colors">
-                                         Editar
-                                     </button>
-                                 </td>
-                             </tr>
-                         ))}
-                     </tbody>
-                 </table>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left min-w-[900px]">
+                      <thead className="bg-slate-950/80">
+                          <tr>
+                              <th className="p-4 text-xs font-bold uppercase tracking-wider text-gray-500">Nome do Contratante</th>
+                              <th className="p-4 text-xs font-bold uppercase tracking-wider text-gray-500">Contato</th>
+                              <th className="p-4 text-xs font-bold uppercase tracking-wider text-gray-500">Voluma de Loc.</th>
+                              <th className="p-4 text-xs font-bold uppercase tracking-wider text-gray-500">Ticket Gasto (LTV)</th>
+                              <th className="p-4 text-xs font-bold uppercase tracking-wider text-gray-500">Tags IA / Comportamento</th>
+                              <th className="p-4 text-xs font-bold uppercase tracking-wider text-gray-500 text-right">Ações</th>
+                          </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/50">
+                          {customers.map(c => (
+                              <tr key={c.id} className="hover:bg-slate-800/30 transition-colors">
+                                  <td className="p-4">
+                                      <div className="flex items-center gap-2">
+                                        <p className="text-sm font-bold text-white">{c.full_name}</p>
+                                        {c.rating_stars ? (
+                                          <span className="text-yellow-500 text-xs font-bold whitespace-nowrap">
+                                            {'★'.repeat(c.rating_stars)}{'☆'.repeat(5 - c.rating_stars)}
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                      <p className="text-xs text-gray-500">Desde {new Date(c.created_at).getFullYear()}</p>
+                                      {c.rating_notes && (
+                                        <p className="text-xs text-gray-400 italic mt-1 font-medium bg-slate-950/40 px-2 py-1 rounded border border-slate-800/40 inline-block">
+                                          "{c.rating_notes}"
+                                        </p>
+                                      )}
+                                  </td>
+                                  <td className="p-4">
+                                      <p className="text-sm text-gray-300">{c.phone || '-'}</p>
+                                      <p className="text-xs text-gray-500">{c.email}</p>
+                                  </td>
+                                  <td className="p-4">
+                                      <span className="bg-slate-800 text-gray-300 text-xs font-bold px-3 py-1 rounded inline-block border border-slate-700">
+                                          {c.rentals} vezes
+                                      </span>
+                                  </td>
+                                  <td className="p-4">
+                                      <p className="text-sm font-bold text-yellow-500">
+                                         {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(c.ltv)}
+                                      </p>
+                                  </td>
+                                  <td className="p-4">
+                                      <div className="flex flex-wrap gap-2">
+                                          {(c.tags || []).map((tag:string, i:number) => (
+                                              <span key={i} className={`text-[10px] uppercase font-medium px-2 py-1 rounded border flex items-center gap-1 ${getTagStyle(tag)}`}>
+                                                 <Tag className="w-3 h-3" /> {tag}
+                                              </span>
+                                          ))}
+                                      </div>
+                                  </td>
+                                  <td className="p-4 text-right">
+                                      <button onClick={() => handleEdit(c)} className="text-yellow-500 hover:text-yellow-400 text-xs font-bold transition-colors">
+                                          Editar
+                                      </button>
+                                  </td>
+                              </tr>
+                          ))}
+                      </tbody>
+                  </table>
+                </div>
              </div>
           </div>
         )}

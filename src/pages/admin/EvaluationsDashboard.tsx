@@ -113,7 +113,7 @@ export default function EvaluationsDashboard() {
       <main className="flex-1 flex flex-col overflow-hidden bg-slate-950">
         
         {/* Header */}
-        <header className="bg-slate-900/50 backdrop-blur-md border-b border-slate-800 p-6 flex justify-between items-center shrink-0">
+        <header className="bg-slate-900/50 backdrop-blur-md border-b border-slate-800 p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shrink-0">
           <div>
             <h1 className="text-2xl font-serif font-bold text-white flex items-center gap-2">
               <Star className="w-6 h-6 text-yellow-500" />
@@ -121,7 +121,7 @@ export default function EvaluationsDashboard() {
             </h1>
             <p className="text-sm text-gray-400">Feedback público enviado por clientes após passeios</p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-start">
             <button
               onClick={handleRefresh}
               disabled={refreshing}
@@ -134,7 +134,7 @@ export default function EvaluationsDashboard() {
               href="/avaliacao"
               target="_blank"
               rel="noreferrer"
-              className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 font-bold px-4 py-2.5 rounded-xl text-xs uppercase tracking-wider transition-colors flex items-center gap-1.5 shadow-[0_0_15px_rgba(234,179,8,0.2)]"
+              className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 font-bold px-4 py-2.5 rounded-xl text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(234,179,8,0.2)] flex-1 sm:flex-initial text-center"
             >
               <Smile className="w-4 h-4" /> Link para Cliente
             </a>

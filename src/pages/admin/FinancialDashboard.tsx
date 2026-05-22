@@ -197,16 +197,16 @@ export default function FinancialDashboard() {
   return (
     <AdminLayout>
       <main className="flex-1 overflow-auto bg-slate-950">
-        <header className="bg-slate-900/50 backdrop-blur-md border-b border-slate-800 p-6 flex justify-between items-center">
+        <header className="bg-slate-900/50 backdrop-blur-md border-b border-slate-800 p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <h1 className="text-2xl font-serif font-bold text-white">DRE & Balanço Financeiro</h1>
             <p className="text-sm text-gray-400">Demonstração do Resultado do Exercício e Fluxo de Caixa</p>
           </div>
-          <div>
+          <div className="w-full sm:w-auto">
             <select
               value={selectedMonth}
               onChange={e => setSelectedMonth(e.target.value)}
-              className="bg-slate-950 border border-slate-800 text-white text-sm rounded-lg px-4 py-2 outline-none focus:border-yellow-500 transition-colors"
+              className="w-full sm:w-auto bg-slate-950 border border-slate-800 text-white text-sm rounded-lg px-4 py-2 outline-none focus:border-yellow-500 transition-colors"
             >
               <option value="all">Todo o Período</option>
               {Array.from(new Set([
@@ -226,7 +226,7 @@ export default function FinancialDashboard() {
           <div className="p-6 max-w-7xl mx-auto space-y-6">
             
             {/* KPI Cards Row */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-16 h-16 bg-green-500/5 rounded-bl-full"></div>
                 <p className="text-xs text-gray-500 uppercase font-bold tracking-wider mb-2">Receita Bruta</p>
@@ -390,15 +390,15 @@ export default function FinancialDashboard() {
 
             {/* Extrato de Caixa */}
             <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-              <div className="p-5 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+              <div className="p-5 border-b border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 bg-slate-900/50">
                 <h2 className="font-bold text-white uppercase tracking-wider text-sm flex items-center gap-2"><DollarSign className="w-4 h-4 text-yellow-500"/>Extrato de Caixa (Ledger)</h2>
-                <div className="flex items-center gap-4 text-xs">
+                <div className="flex flex-wrap items-center gap-4 text-xs">
                   <span className="text-green-500 font-bold">Entradas: {fmtFull(totalIncome)}</span>
                   <span className="text-red-500 font-bold">Saídas: {fmtFull(totalExpense)}</span>
                 </div>
               </div>
-              <div className="max-h-[400px] overflow-y-auto">
-                <table className="w-full text-left">
+              <div className="max-h-[400px] overflow-y-auto overflow-x-auto">
+                <table className="w-full text-left min-w-[650px]">
                   <thead className="bg-slate-950/50 sticky top-0">
                     <tr>
                       <th className="p-4 text-xs text-gray-500 uppercase">Data</th>

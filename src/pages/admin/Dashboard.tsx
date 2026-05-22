@@ -194,12 +194,12 @@ export default function Dashboard() {
     <AdminLayout>
       {/* Main Content */}
       <main className="flex-1 overflow-auto">
-        <header className="bg-slate-900/50 backdrop-blur-md border-b border-slate-800 p-6 sticky top-0 z-10 flex justify-between items-center">
+        <header className="bg-slate-900/50 backdrop-blur-md border-b border-slate-800 p-6 md:sticky md:top-0 z-10 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <h1 className="text-2xl font-serif font-bold text-white">Dashboard de Bordo</h1>
             <p className="text-sm text-gray-400">Bem-vindo ao Centro de Comando</p>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 w-full sm:w-auto justify-end">
             <button className="relative p-2 text-gray-400 hover:text-white transition-colors">
               <BellRing className="w-6 h-6" />
               <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-yellow-500 rounded-full border border-slate-900"></span>

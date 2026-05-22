@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Anchor, Ship, CalendarCheck, Bot, MessageCircle, Shield, ShieldOff, Send, Image, CheckCircle, Clock, Landmark, Wallet, Users, Megaphone, Tag, Star, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Anchor, Ship, CalendarCheck, Bot, MessageCircle, Shield, ShieldOff, Send, Image, CheckCircle, Clock, Landmark, Wallet, Users, Megaphone, Tag, Star, AlertTriangle, RefreshCw, ArrowLeft, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../components/AdminLayout';
 
@@ -21,6 +21,7 @@ export default function AICommandCenter() {
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [checkingWa, setCheckingWa] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [showQrModal, setShowQrModal] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -36,6 +37,7 @@ export default function AICommandCenter() {
         if (data.state === 'open') {
           setQrCode(null);
           setConnectionError(null);
+          setShowQrModal(false); // Close modal when connected
         } else if (data.qr && data.qr.base64) {
           setQrCode(data.qr.base64);
           setConnectionError(null);
@@ -65,7 +67,9 @@ export default function AICommandCenter() {
       if (convData) {
         setConversations(convData);
         if (convData.length > 0 && !selectedConvId) {
-          setSelectedConvId(convData[0].id);
+          if (window.innerWidth >= 768) {
+            setSelectedConvId(convData[0].id);
+          }
         }
       }
 
@@ -270,14 +274,14 @@ export default function AICommandCenter() {
     <AdminLayout>
       <main className="flex-1 overflow-hidden flex flex-col">
         {/* Header */}
-        <header className="bg-slate-900/50 backdrop-blur-md border-b border-slate-800 p-6 flex justify-between items-center shrink-0">
+        <header className="bg-slate-900/50 backdrop-blur-md border-b border-slate-800 p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shrink-0">
           <div>
             <h1 className="text-2xl font-serif font-bold text-white flex items-center gap-2">
               Central de Monitoramento IA <Bot className="w-6 h-6 text-purple-400 animate-pulse" />
             </h1>
             <p className="text-sm text-gray-400">Supervisão de conversas e campanhas automáticas</p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-start">
             {getWaStateBadge()}
             <button 
               onClick={checkWhatsAppConnection}
@@ -292,7 +296,7 @@ export default function AICommandCenter() {
 
         {/* Tab Switcher */}
         <div className="border-b border-slate-800 px-6 pt-4 bg-slate-900/30 flex gap-6 shrink-0">
-          <button onClick={() => setActiveTab('CHATS')} className={`pb-4 text-sm font-bold uppercase tracking-wider transition-colors border-b-2 flex items-center gap-2 ${activeTab === 'CHATS' ? 'border-purple-500 text-purple-400' : 'border-transparent text-gray-500 hover:text-gray-300'}`}>
+          <button onClick={() => { setActiveTab('CHATS'); setSelectedConvId(null); }} className={`pb-4 text-sm font-bold uppercase tracking-wider transition-colors border-b-2 flex items-center gap-2 ${activeTab === 'CHATS' ? 'border-purple-500 text-purple-400' : 'border-transparent text-gray-500 hover:text-gray-300'}`}>
             <MessageCircle className="w-4 h-4" /> Feed de Conversas
           </button>
           <button onClick={() => setActiveTab('CAMPAIGNS')} className={`pb-4 text-sm font-bold uppercase tracking-wider transition-colors border-b-2 flex items-center gap-2 ${activeTab === 'CAMPAIGNS' ? 'border-purple-500 text-purple-400' : 'border-transparent text-gray-500 hover:text-gray-300'}`}>
@@ -311,7 +315,7 @@ export default function AICommandCenter() {
             {activeTab === 'CHATS' && (
               <div className="flex flex-1 overflow-hidden">
                 {/* Conversations List */}
-                <div className="w-80 bg-slate-900 border-r border-slate-800 overflow-y-auto shrink-0 flex flex-col">
+                <div className={`w-full md:w-80 bg-slate-900 md:border-r border-slate-800 overflow-y-auto shrink-0 flex flex-col ${selectedConvId ? 'hidden md:flex' : 'flex'}`}>
                   <div className="p-4 border-b border-slate-800 shrink-0">
                     <p className="text-xs text-gray-500 uppercase font-bold tracking-widest">Conversas Ativas</p>
                   </div>
@@ -347,10 +351,10 @@ export default function AICommandCenter() {
                 </div>
 
                 {/* Chat View */}
-                <div className="flex-1 flex flex-col bg-slate-950 overflow-hidden">
+                <div className={`flex-1 flex flex-col bg-slate-950 overflow-hidden ${selectedConvId ? 'flex' : 'hidden md:flex'}`}>
                   {/* WhatsApp Scan Banner if offline */}
                   {waState !== 'open' && (
-                    <div className="bg-amber-950/40 border-b border-amber-500/30 p-4 flex flex-col md:flex-row items-center justify-between gap-4 shrink-0 transition-all">
+                    <div className="bg-amber-950/40 border-b border-amber-500/30 p-4 flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0 transition-all">
                       <div className="flex items-center gap-3">
                         <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
                         <div>
@@ -363,56 +367,60 @@ export default function AICommandCenter() {
                           )}
                         </div>
                       </div>
-                      {qrCode ? (
-                        <div className="flex flex-col items-center gap-1 bg-slate-900 p-2.5 rounded-xl border border-slate-800 shadow-lg">
-                          <img src={qrCode} alt="WhatsApp QR Code" className="w-32 h-32 rounded-lg bg-white p-1" />
-                          <span className="text-[9px] text-gray-400 uppercase font-semibold tracking-wider">Escaneie pelo aplicativo</span>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={checkWhatsAppConnection}
-                          disabled={checkingWa}
-                          className="bg-amber-500 hover:bg-amber-400 disabled:bg-slate-800 disabled:text-slate-600 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs transition-colors shrink-0 shadow-md shadow-amber-500/10"
-                        >
-                          {checkingWa ? 'Gerando...' : 'Gerar QR Code'}
-                        </button>
-                      )}
+                      <button
+                        onClick={() => {
+                          checkWhatsAppConnection();
+                          setShowQrModal(true);
+                        }}
+                        className="w-full sm:w-auto bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold px-5 py-2.5 rounded-xl text-xs transition-all shrink-0 shadow-md shadow-amber-500/20 flex items-center justify-center gap-2 hover:scale-[1.02]"
+                      >
+                        {checkingWa ? 'Gerando...' : 'Conectar / Escanear QR Code'}
+                      </button>
                     </div>
                   )}
 
                   {selectedConv ? (
                     <>
                       {/* Chat Header */}
-                      <div className="p-4 border-b border-slate-800 bg-slate-900/50 flex justify-between items-center shrink-0">
-                        <div>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <p className="font-bold text-white text-base">{selectedConv.contact_name}</p>
-                            
-                            {/* Negotiation Stage Badge */}
-                            <span className={`text-[9px] px-2 py-0.5 rounded-full border font-bold uppercase tracking-wider ${
-                              selectedConv.stage === 'concluido' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :
-                              selectedConv.stage === 'reservado' ? 'bg-green-500/10 text-green-400 border-green-500/30' :
-                              selectedConv.stage === 'pix_enviado' ? 'bg-blue-500/10 text-blue-400 border-blue-500/30' :
-                              selectedConv.stage === 'sinal_solicitado' ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30' :
-                              selectedConv.stage === 'cotado' ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30' :
-                              'bg-gray-500/10 text-gray-400 border-gray-500/30'
-                            }`}>
-                              Etapa: {selectedConv.stage || 'novo'}
-                            </span>
-
-                            {/* Trip Target Date */}
-                            {selectedConv.target_date && (
-                              <span className="text-[9px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full border border-slate-700 flex items-center gap-1 font-semibold">
-                                <CalendarCheck className="w-3.5 h-3.5 text-purple-400" />
-                                {new Date(selectedConv.target_date + 'T12:00:00').toLocaleDateString('pt-BR')}
+                      <div className="p-4 border-b border-slate-800 bg-slate-900/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 shrink-0">
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => setSelectedConvId(null)}
+                            className="md:hidden p-2 text-gray-400 hover:text-white -ml-2 rounded-lg hover:bg-slate-800 transition-colors"
+                            title="Voltar para conversas"
+                          >
+                            <ArrowLeft className="w-6 h-6" />
+                          </button>
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="font-bold text-white text-base">{selectedConv.contact_name}</p>
+                              
+                              {/* Negotiation Stage Badge */}
+                              <span className={`text-[9px] px-2 py-0.5 rounded-full border font-bold uppercase tracking-wider ${
+                                selectedConv.stage === 'concluido' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' :
+                                selectedConv.stage === 'reservado' ? 'bg-green-500/10 text-green-400 border-green-500/30' :
+                                selectedConv.stage === 'pix_enviado' ? 'bg-blue-500/10 text-blue-400 border-blue-500/30' :
+                                selectedConv.stage === 'sinal_solicitado' ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30' :
+                                selectedConv.stage === 'cotado' ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30' :
+                                'bg-gray-500/10 text-gray-400 border-gray-500/30'
+                              }`}>
+                                Etapa: {selectedConv.stage || 'novo'}
                               </span>
-                            )}
+
+                              {/* Trip Target Date */}
+                              {selectedConv.target_date && (
+                                <span className="text-[9px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full border border-slate-700 flex items-center gap-1 font-semibold">
+                                  <CalendarCheck className="w-3.5 h-3.5 text-purple-400" />
+                                  {new Date(selectedConv.target_date + 'T12:00:00').toLocaleDateString('pt-BR')}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-gray-500 mt-0.5">{selectedConv.subject} · {selectedConv.contact_phone}</p>
                           </div>
-                          <p className="text-xs text-gray-500 mt-0.5">{selectedConv.subject} · {selectedConv.contact_phone}</p>
                         </div>
                         <button
                           onClick={() => handleTakeoverToggle(selectedConv.id, selectedConv.status)}
-                          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md ${
+                          className={`w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md ${
                             selectedConv.status === 'AI_CONTROL'
                               ? 'bg-yellow-500 hover:bg-yellow-400 text-slate-900 shadow-[0_0_15px_rgba(234,179,8,0.2)] border border-yellow-400/30'
                               : 'bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 border border-purple-500/30'
@@ -551,6 +559,91 @@ export default function AICommandCenter() {
           </>
         )}
       </main>
+
+      {/* QR Code Synchronization Modal */}
+      {showQrModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md transition-all">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 max-w-md w-full shadow-2xl relative flex flex-col items-center">
+            <button 
+              onClick={() => setShowQrModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-2 rounded-lg hover:bg-slate-800 transition-colors"
+            >
+              <X className="w-6 h-6" />
+            </button>
+
+            <div className="text-center mb-6">
+              <h3 className="text-xl font-bold text-white flex items-center justify-center gap-2">
+                Sincronizar WhatsApp
+              </h3>
+              <p className="text-xs text-slate-400 mt-1">Conecte o número do seu celular para ativar Lara (IA)</p>
+            </div>
+
+            {checkingWa && !qrCode ? (
+              <div className="w-64 h-64 md:w-72 md:h-72 rounded-2xl bg-slate-950/50 flex flex-col items-center justify-center gap-3 border border-slate-800">
+                <RefreshCw className="w-8 h-8 text-yellow-500 animate-spin" />
+                <p className="text-xs text-slate-500 font-medium">Buscando QR Code...</p>
+              </div>
+            ) : qrCode ? (
+              <div className="flex flex-col items-center gap-4 w-full">
+                <div className="bg-white p-3.5 rounded-3xl shadow-xl shadow-white/5 border border-white">
+                  <img src={qrCode} alt="WhatsApp QR Code" className="w-60 h-60 md:w-68 md:h-68 rounded-xl object-contain bg-white" />
+                </div>
+                <div className="bg-slate-950/45 p-4 rounded-2xl border border-slate-800 w-full text-left space-y-2">
+                  <p className="text-xs font-bold text-yellow-500 flex items-center gap-1.5 uppercase tracking-wider">
+                    Como Escanear:
+                  </p>
+                  <ol className="text-xs text-slate-300 list-decimal list-inside space-y-1">
+                    <li>Abra o WhatsApp no seu celular</li>
+                    <li>Vá em <span className="font-semibold text-white">Configurações</span> ou <span className="font-semibold text-white">Menu</span> (três pontos)</li>
+                    <li>Toque em <span className="font-semibold text-white">Dispositivos Conectados</span></li>
+                    <li>Toque em <span className="font-semibold text-white">Conectar Dispositivo</span> e aponte para a tela</li>
+                  </ol>
+                </div>
+              </div>
+            ) : (
+              <div className="w-64 h-64 md:w-72 md:h-72 rounded-2xl bg-slate-950/50 flex flex-col items-center justify-center gap-3 border border-slate-800 p-4 text-center">
+                <AlertTriangle className="w-8 h-8 text-rose-500" />
+                <p className="text-xs text-rose-400 font-semibold">QR Code não disponível</p>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  A API Evolution pode estar desconectada ou reiniciando. Tente atualizar o status.
+                </p>
+                <button 
+                  onClick={checkWhatsAppConnection}
+                  className="mt-2 text-xs bg-slate-800 hover:bg-slate-700 text-white px-3 py-1.5 rounded-lg border border-slate-700 font-semibold flex items-center gap-1.5 transition-colors"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Tentar Novamente
+                </button>
+              </div>
+            )}
+
+            <div className="mt-6 flex justify-between items-center w-full pt-4 border-t border-slate-800/80">
+              <div className="flex items-center gap-2">
+                <span className={`w-2.5 h-2.5 rounded-full ${
+                  waState === 'open' ? 'bg-emerald-500' :
+                  waState === 'connecting' ? 'bg-amber-500 animate-pulse' :
+                  'bg-rose-500'
+                }`} />
+                <span className="text-[11px] font-semibold text-slate-400">
+                  Status: {
+                    waState === 'open' ? 'Conectado' :
+                    waState === 'connecting' ? 'Conectando' :
+                    'Aguardando leitura'
+                  }
+                </span>
+              </div>
+              <button
+                onClick={checkWhatsAppConnection}
+                disabled={checkingWa}
+                className="text-xs text-yellow-500 hover:text-yellow-400 font-bold flex items-center gap-1 bg-yellow-500/10 hover:bg-yellow-500/25 px-3 py-1.5 rounded-lg border border-yellow-500/20 transition-all"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${checkingWa ? 'animate-spin' : ''}`} />
+                {checkingWa ? 'Verificando...' : 'Atualizar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AdminLayout>
   );
 }

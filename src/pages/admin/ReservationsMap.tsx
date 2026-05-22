@@ -382,12 +382,12 @@ export default function ReservationsMap() {
     <AdminLayout>
       <main className="flex-1 overflow-auto flex flex-col">
         {/* Header */}
-        <header className="bg-slate-900/50 backdrop-blur-md border-b border-slate-800 p-6 flex justify-between items-center shrink-0">
+        <header className="bg-slate-900/50 backdrop-blur-md border-b border-slate-800 p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shrink-0">
           <div>
             <h1 className="text-2xl font-serif font-bold text-white">Mapa de Reservas</h1>
             <p className="text-sm text-gray-400">Calendário Inteligente (Gantt) - LIVE DATABASE</p>
           </div>
-          <div className="flex gap-4">
+          <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-between sm:justify-end">
             <div className="hidden lg:flex items-center gap-4 text-xs font-medium mr-4">
                <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-green-500 block border border-green-600"></span> Confirmado</span>
                <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-yellow-500 block border border-yellow-600"></span> Pendente</span>
@@ -395,15 +395,17 @@ export default function ReservationsMap() {
                <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-red-500 block border border-red-600"></span> Bloqueado</span>
                <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-orange-500 block border border-orange-600"></span> Remarcar</span>
             </div>
-            <button className="bg-slate-800 border border-slate-700 p-2 rounded-lg text-gray-400 hover:text-white transition-colors">
-                <Filter className="w-5 h-5"/>
-            </button>
-            <button 
-              onClick={() => openNewReservation()}
-              className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 font-bold px-4 py-2 rounded-lg transition-colors text-sm shadow-[0_0_15px_rgba(234,179,8,0.2)]"
-            >
-                Nova Reserva
-            </button>
+            <div className="flex items-center gap-3 ml-auto sm:ml-0">
+              <button className="bg-slate-800 border border-slate-700 p-2 rounded-lg text-gray-400 hover:text-white transition-colors">
+                  <Filter className="w-5 h-5"/>
+              </button>
+              <button 
+                onClick={() => openNewReservation()}
+                className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 font-bold px-4 py-2 rounded-lg transition-colors text-sm shadow-[0_0_15px_rgba(234,179,8,0.2)]"
+              >
+                  Nova Reserva
+              </button>
+            </div>
           </div>
         </header>
 

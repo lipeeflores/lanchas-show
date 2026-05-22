@@ -125,7 +125,7 @@ export default function CalendarSettings() {
     <AdminLayout>
       {/* Main Content */}
       <main className="flex-1 flex flex-col overflow-hidden">
-        <header className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+        <header className="p-6 border-b border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-900/50">
           <div>
             <h1 className="text-2xl font-bold text-white flex items-center gap-3">
               <Settings className="w-7 h-7 text-yellow-500" />
@@ -253,8 +253,8 @@ export default function CalendarSettings() {
                 </div>
                 <div className="p-6">
                   {/* Add new holiday */}
-                  <div className="flex gap-3 items-end mb-6">
-                    <div className="flex-1">
+                  <div className="flex flex-col sm:flex-row gap-3 sm:items-end mb-6">
+                    <div className="w-full sm:flex-1">
                       <label className="text-xs text-gray-500 uppercase font-bold">Data</label>
                       <input
                         type="date"
@@ -263,7 +263,7 @@ export default function CalendarSettings() {
                         className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:border-yellow-500 focus:outline-none"
                       />
                     </div>
-                    <div className="flex-1">
+                    <div className="w-full sm:flex-1">
                       <label className="text-xs text-gray-500 uppercase font-bold">Descrição (Opcional)</label>
                       <input
                         type="text"
@@ -275,7 +275,7 @@ export default function CalendarSettings() {
                     </div>
                     <button
                       onClick={addHoliday}
-                      className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 font-bold px-4 py-2.5 rounded-lg transition-colors flex items-center gap-2 shrink-0"
+                      className="w-full sm:w-auto bg-yellow-500 hover:bg-yellow-400 text-slate-900 font-bold px-4 py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2 shrink-0"
                     >
                       <Plus className="w-4 h-4" /> Adicionar
                     </button>
