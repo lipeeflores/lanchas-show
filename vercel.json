@@ -3,7 +3,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://lanchas-show-backend.up.railway.app/api/:path*"
+      "destination": "https://lanchas-show-production.up.railway.app/api/:path*"
     },
     {
       "source": "/(.*)",
