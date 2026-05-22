@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Ship, CalendarCheck, TrendingUp, TrendingDown, DollarSign, Wallet, Activity, Users, Landmark, Bot, Settings, BarChart3, PieChart as PieIcon, ArrowUpRight, ArrowDownRight, Minus, Star } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import AdminLayout from '../../components/AdminLayout';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area, CartesianGrid } from 'recharts';
 
 export default function FinancialDashboard() {
@@ -51,6 +52,18 @@ export default function FinancialDashboard() {
             description: `Locação ${b.name} — ${clientName}`,
             created_at: r.created_at
           });
+
+          // Add departure cost (original_rate) as EXPENSE in ledger automatically
+          if(opCost > 0) {
+            ledger.push({
+              id: 'cost-' + r.id,
+              type: 'EXPENSE',
+              amount: opCost,
+              description: `Custo de Saída ${b.name} — ${clientName}`,
+              created_at: r.created_at
+            });
+            monthly[mk].despesa += opCost;
+          }
 
           if(b.owner_type === 'OWN') {
             rb += Number(r.total_price);
@@ -106,6 +119,10 @@ export default function FinancialDashboard() {
         setLucroIntermediacao(lp);
         setRanking(Object.values(boatCount).sort((a,b) => b.rev - a.rev).slice(0,5));
         setMonthlyData(Object.entries(monthly).sort(([a],[b]) => a.localeCompare(b)).map(([,v]) => v));
+        // Include departure costs in expense breakdown for pie chart
+        if(cs > 0) {
+          expCat['Custos de Saída'] = (expCat['Custos de Saída'] || 0) + cs;
+        }
         setExpenseBreakdown(Object.entries(expCat).map(([name, value]) => ({ name, value })));
       }
       
@@ -137,25 +154,7 @@ export default function FinancialDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex text-slate-50 font-sans selection:bg-yellow-500/30">
-      <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col hidden md:flex shrink-0">
-        <div className="p-6 flex items-center justify-center border-b border-slate-800">
-          <img src="/logo.png" alt="Lanchas Show" className="h-16 w-auto drop-shadow-[0_0_8px_rgba(234,179,8,0.2)]" />
-        </div>
-        <div className="p-4 flex-grow overflow-y-auto">
-          <nav className="space-y-1">
-            <Link to="/admin/dashboard" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors"><Ship className="w-5 h-5" /><span className="text-sm">Visão 360º</span></Link>
-            <Link to="/admin/reservas" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors"><CalendarCheck className="w-5 h-5" /><span className="text-sm">Reservas</span></Link>
-            <Link to="/admin/frota" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors"><Landmark className="w-5 h-5" /><span className="text-sm">Frotas</span></Link>
-            <Link to="/admin/financeiro" className="flex items-center gap-3 px-4 py-3 bg-slate-800 text-yellow-500 rounded-lg border border-slate-700"><Wallet className="w-5 h-5" /><span className="text-sm">DRE & Caixa</span></Link>
-            <Link to="/admin/clientes" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors"><Users className="w-5 h-5" /><span className="text-sm">Clientes CRM</span></Link>
-            <Link to="/admin/ia" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors"><Bot className="w-5 h-5" /><span className="text-sm">Central IA</span></Link>
-            <Link to="/admin/calendario" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors"><Settings className="w-5 h-5" /><span className="text-sm">Temporada & Preços</span></Link>
-            <Link to="/admin/avaliacoes" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors"><Star className="w-5 h-5" /><span className="text-sm">Avaliações</span></Link>
-          </nav>
-        </div>
-      </aside>
-
+    <AdminLayout>
       <main className="flex-1 overflow-auto bg-slate-950">
         <header className="bg-slate-900/50 backdrop-blur-md border-b border-slate-800 p-6 flex justify-between items-center">
           <div>
@@ -374,6 +373,6 @@ export default function FinancialDashboard() {
           </div>
         )}
       </main>
-    </div>
+    </AdminLayout>
   );
 }

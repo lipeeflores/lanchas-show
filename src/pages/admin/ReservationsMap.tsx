@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { getRoutePriceSuggestion, PricingTier } from '../../lib/pricingEngine';
+import AdminLayout from '../../components/AdminLayout';
 
 export default function ReservationsMap() {
   const [boats, setBoats] = useState<any[]>([]);
@@ -354,51 +355,7 @@ export default function ReservationsMap() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex text-slate-50 font-sans selection:bg-yellow-500/30">
-      
-      <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col hidden md:flex">
-        <div className="p-6 flex items-center justify-center border-b border-slate-800">
-          <img src="/logo.png" alt="Lanchas Show" className="h-16 w-auto drop-shadow-[0_0_8px_rgba(234,179,8,0.2)]" />
-        </div>
-        <div className="p-4 flex-grow">
-          <p className="text-xs uppercase tracking-widest text-gray-500 mb-4 px-4">Menu ADM</p>
-          <nav className="space-y-2">
-            <Link to="/admin/dashboard" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Ship className="w-5 h-5" />
-              <span className="font-medium text-sm">Visão 360º</span>
-            </Link>
-            <Link to="/admin/reservas" className="flex items-center gap-3 px-4 py-3 bg-slate-800 text-yellow-500 rounded-lg border border-slate-700">
-              <CalendarCheck className="w-5 h-5" />
-              <span className="font-medium text-sm">Reservas</span>
-            </Link>
-            <Link to="/admin/frota" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Landmark className="w-5 h-5" />
-              <span className="font-medium text-sm">Gestão de Frotas</span>
-            </Link>
-            <Link to="/admin/financeiro" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Wallet className="w-5 h-5" />
-              <span className="font-medium text-sm">DRE & Caixa</span>
-            </Link>
-            <Link to="/admin/clientes" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Users className="w-5 h-5" />
-              <span className="font-medium text-sm">Clientes CRM</span>
-            </Link>
-            <Link to="/admin/ia" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Bot className="w-5 h-5" />
-              <span className="font-medium text-sm">Central IA</span>
-            </Link>
-            <Link to="/admin/calendario" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Settings className="w-5 h-5" />
-              <span className="font-medium text-sm">Temporada & Preços</span>
-            </Link>
-            <Link to="/admin/avaliacoes" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Star className="w-5 h-5" />
-              <span className="font-medium text-sm">Avaliações</span>
-            </Link>
-          </nav>
-        </div>
-      </aside>
-
+    <AdminLayout>
       <main className="flex-1 overflow-auto flex flex-col">
         {/* Header */}
         <header className="bg-slate-900/50 backdrop-blur-md border-b border-slate-800 p-6 flex justify-between items-center shrink-0">
@@ -956,31 +913,31 @@ export default function ReservationsMap() {
                      </button>
                    )}
                    {formData.id && isDeleting && (
-                     <div className="mr-auto flex items-center gap-3 bg-red-500/10 p-2 rounded-lg border border-red-500/20">
-                       <span className="text-xs text-red-400 font-bold uppercase">Digite 'apagar':</span>
-                       <input 
-                         type="text" 
-                         value={deleteConfirmText}
-                         onChange={e => setDeleteConfirmText(e.target.value)}
-                         placeholder="apagar"
-                         className="bg-slate-900 border border-red-500/50 rounded px-2 py-1 text-white text-sm w-24 outline-none focus:border-red-500"
-                       />
-                       <button 
-                         type="button"
-                         onClick={handleDeleteReservation}
-                         className="bg-red-500 text-white text-xs font-bold px-3 py-1.5 rounded hover:bg-red-600 transition-colors"
-                       >
-                         Confirmar Exclusão
-                       </button>
-                       <button 
-                         type="button"
-                         onClick={() => { setIsDeleting(false); setDeleteConfirmText(''); }}
-                         className="text-gray-500 hover:text-white p-1"
-                       >
-                         <X className="w-4 h-4"/>
-                       </button>
-                     </div>
-                   )}
+                      <div className="mr-auto flex items-center gap-3 bg-red-500/10 p-2 rounded-lg border border-red-500/20">
+                        <span className="text-xs text-red-400 font-bold uppercase">Digite 'apagar':</span>
+                        <input 
+                          type="text" 
+                          value={deleteConfirmText}
+                          onChange={e => setDeleteConfirmText(e.target.value)}
+                          placeholder="apagar"
+                          className="bg-slate-900 border border-red-500/50 rounded px-2 py-1 text-white text-sm w-24 outline-none focus:border-red-500"
+                        />
+                        <button 
+                          type="button"
+                          onClick={handleDeleteReservation}
+                          className="bg-red-500 text-white text-xs font-bold px-3 py-1.5 rounded hover:bg-red-600 transition-colors"
+                        >
+                          Confirmar Exclusão
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => { setIsDeleting(false); setDeleteConfirmText(''); }}
+                          className="text-gray-500 hover:text-white p-1"
+                        >
+                          <X className="w-4 h-4"/>
+                        </button>
+                      </div>
+                    )}
                    {formData.id && formData.status !== 'COMPLETED' && (
                      <button
                        type="button"
@@ -1106,6 +1063,6 @@ export default function ReservationsMap() {
           </div>
         )}
       </main>
-    </div>
+    </AdminLayout>
   );
 }

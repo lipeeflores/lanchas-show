@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Link } from 'react-router-dom';
 import { Anchor, Ship, CalendarCheck, Landmark, Wallet, Users, Bot, Settings, Star, Trash2, MessageSquare, ShieldCheck, User, RefreshCw } from 'lucide-react';
+import AdminLayout from '../../components/AdminLayout';
 
 export default function EvaluationsDashboard() {
   const [evaluations, setEvaluations] = useState<any[]>([]);
@@ -107,56 +108,7 @@ export default function EvaluationsDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex text-slate-50 font-sans selection:bg-yellow-500/30">
-      
-      {/* Sidebar */}
-      <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col hidden md:flex shrink-0">
-        <div className="p-6 flex items-center justify-center border-b border-slate-800">
-          <img src="/logo.png" alt="Lanchas Show" className="h-16 w-auto drop-shadow-[0_0_8px_rgba(234,179,8,0.2)]" />
-        </div>
-        <div className="p-4 flex-grow overflow-y-auto">
-          <nav className="space-y-1">
-            <Link to="/admin/dashboard" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Ship className="w-5 h-5" />
-              <span className="text-sm">Visão 360º</span>
-            </Link>
-            <Link to="/admin/reservas" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <CalendarCheck className="w-5 h-5" />
-              <span className="text-sm">Reservas</span>
-            </Link>
-            <Link to="/admin/frota" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Landmark className="w-5 h-5" />
-              <span className="text-sm">Gestão de Frotas</span>
-            </Link>
-            <Link to="/admin/financeiro" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Wallet className="w-5 h-5" />
-              <span className="text-sm">DRE & Caixa</span>
-            </Link>
-            <Link to="/admin/clientes" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Users className="w-5 h-5" />
-              <span className="text-sm">Clientes CRM</span>
-            </Link>
-            <Link to="/admin/ia" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Bot className="w-5 h-5" />
-              <span className="text-sm">Central IA</span>
-            </Link>
-            <Link to="/admin/calendario" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Settings className="w-5 h-5" />
-              <span className="text-sm">Temporada & Preços</span>
-            </Link>
-            <Link to="/admin/avaliacoes" className="flex items-center gap-3 px-4 py-3 bg-slate-800 text-yellow-500 rounded-lg border border-slate-700">
-              <Star className="w-5 h-5" />
-              <span className="text-sm">Avaliações</span>
-            </Link>
-          </nav>
-        </div>
-        <div className="p-4 border-t border-slate-800">
-          <Link to="/" className="text-gray-500 hover:text-gray-300 text-sm flex items-center justify-center transition-colors">
-            Sair e voltar ao site
-          </Link>
-        </div>
-      </aside>
-
+    <AdminLayout>
       {/* Main Panel */}
       <main className="flex-1 flex flex-col overflow-hidden bg-slate-950">
         
@@ -318,8 +270,7 @@ export default function EvaluationsDashboard() {
           )}
         </div>
       </main>
-
-    </div>
+    </AdminLayout>
   );
 }
 

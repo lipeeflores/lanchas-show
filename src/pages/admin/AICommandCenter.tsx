@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Anchor, Ship, CalendarCheck, Bot, MessageCircle, Shield, ShieldOff, Send, Image, CheckCircle, Clock, Landmark, Wallet, Users, Megaphone, Tag, Star } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import AdminLayout from '../../components/AdminLayout';
 
 export default function AICommandCenter() {
   const [conversations, setConversations] = useState<any[]>([]);
@@ -87,27 +88,7 @@ export default function AICommandCenter() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex text-slate-50 font-sans selection:bg-yellow-500/30">
-
-      {/* Sidebar */}
-      <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col hidden md:flex shrink-0">
-        <div className="p-6 flex items-center justify-center border-b border-slate-800">
-          <img src="/logo.png" alt="Lanchas Show" className="h-16 w-auto drop-shadow-[0_0_8px_rgba(234,179,8,0.2)]" />
-        </div>
-        <div className="p-4 flex-grow overflow-y-auto">
-          <nav className="space-y-1">
-            <Link to="/admin/dashboard" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors"><Ship className="w-5 h-5" /><span className="text-sm">Visão 360º</span></Link>
-            <Link to="/admin/reservas" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors"><CalendarCheck className="w-5 h-5" /><span className="text-sm">Reservas</span></Link>
-            <Link to="/admin/frota" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors"><Landmark className="w-5 h-5" /><span className="text-sm">Frotas</span></Link>
-            <Link to="/admin/financeiro" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors"><Wallet className="w-5 h-5" /><span className="text-sm">DRE & Caixa</span></Link>
-            <Link to="/admin/clientes" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors"><Users className="w-5 h-5" /><span className="text-sm">Clientes CRM</span></Link>
-            <Link to="/admin/ia" className="flex items-center gap-3 px-4 py-3 bg-slate-800 text-yellow-500 rounded-lg border border-slate-700"><Bot className="w-5 h-5" /><span className="text-sm">Central IA</span></Link>
-            <Link to="/admin/calendario" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors"><Settings className="w-5 h-5" /><span className="text-sm">Temporada & Preços</span></Link>
-            <Link to="/admin/avaliacoes" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors"><Star className="w-5 h-5" /><span className="text-sm">Avaliações</span></Link>
-          </nav>
-        </div>
-      </aside>
-
+    <AdminLayout>
       <main className="flex-1 overflow-hidden flex flex-col">
         {/* Header */}
         <header className="bg-slate-900/50 backdrop-blur-md border-b border-slate-800 p-6 flex justify-between items-center shrink-0">
@@ -304,6 +285,6 @@ export default function AICommandCenter() {
           </>
         )}
       </main>
-    </div>
+    </AdminLayout>
   );
 }

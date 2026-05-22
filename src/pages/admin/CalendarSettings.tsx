@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { getPricingTier, PricingTier } from '../../lib/pricingEngine';
 import { Anchor, Ship, CalendarCheck, Sun, Snowflake, PartyPopper, Landmark, Wallet, Users, Bot, Save, X, Plus, Trash2, CheckCircle, AlertCircle, Settings, Star } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import AdminLayout from '../../components/AdminLayout';
 
 export default function CalendarSettings() {
   const [loading, setLoading] = useState(true);
@@ -121,57 +122,7 @@ export default function CalendarSettings() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex text-slate-50 font-sans selection:bg-yellow-500/30">
-
-      {/* Sidebar */}
-      <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col hidden md:flex">
-        <div className="p-6 flex items-center justify-center border-b border-slate-800">
-          <img src="/logo.png" alt="Lanchas Show" className="h-16 w-auto drop-shadow-[0_0_8px_rgba(234,179,8,0.2)]" />
-        </div>
-        <div className="p-4 flex-grow">
-          <p className="text-xs uppercase tracking-widest text-gray-500 mb-4 px-4">Menu ADM</p>
-          <nav className="space-y-2">
-            <Link to="/admin/dashboard" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Ship className="w-5 h-5" />
-              <span className="font-medium text-sm">Visão 360º</span>
-            </Link>
-            <Link to="/admin/reservas" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <CalendarCheck className="w-5 h-5" />
-              <span className="font-medium text-sm">Reservas</span>
-            </Link>
-            <Link to="/admin/frota" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Landmark className="w-5 h-5" />
-              <span className="font-medium text-sm">Gestão de Frotas</span>
-            </Link>
-            <Link to="/admin/financeiro" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Wallet className="w-5 h-5" />
-              <span className="font-medium text-sm">DRE & Caixa</span>
-            </Link>
-            <Link to="/admin/clientes" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Users className="w-5 h-5" />
-              <span className="font-medium text-sm">Clientes CRM</span>
-            </Link>
-            <Link to="/admin/ia" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Bot className="w-5 h-5" />
-              <span className="font-medium text-sm">Central IA</span>
-            </Link>
-            <Link to="/admin/calendario" className="flex items-center gap-3 px-4 py-3 bg-slate-800 text-yellow-500 rounded-lg border border-slate-700">
-              <Settings className="w-5 h-5" />
-              <span className="font-medium text-sm">Temporada & Preços</span>
-            </Link>
-            <Link to="/admin/avaliacoes" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Star className="w-5 h-5" />
-              <span className="font-medium text-sm">Avaliações</span>
-            </Link>
-          </nav>
-        </div>
-        <div className="p-4 border-t border-slate-800">
-          <Link to="/" className="text-gray-500 hover:text-gray-300 text-sm flex items-center justify-center transition-colors">
-            Sair e voltar ao site
-          </Link>
-        </div>
-      </aside>
-
+    <AdminLayout>
       {/* Main Content */}
       <main className="flex-1 flex flex-col overflow-hidden">
         <header className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
@@ -405,6 +356,6 @@ export default function CalendarSettings() {
           )}
         </div>
       </main>
-    </div>
+    </AdminLayout>
   );
 }

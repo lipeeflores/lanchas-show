@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Anchor, Ship, CalendarCheck, FileText, Banknote, Landmark, CheckCircle, Clock, AlertCircle, Wallet, Users, Bot, Plus, X, Save, Settings, Trash2, MapPin, Upload, Image as ImageIcon, Loader2, Star } from 'lucide-react';
+import { Anchor, Ship, CalendarCheck, FileText, Banknote, Landmark, CheckCircle, Clock, AlertCircle, Wallet, Users, Bot, Plus, X, Save, Settings, Trash2, MapPin, Upload, Image as ImageIcon, Loader2, Star, Phone, Edit2, UserPlus } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import AdminLayout from '../../components/AdminLayout';
 
 export default function FleetManagement() {
-  const [activeTab, setActiveTab] = useState<'OWN' | 'PARTNERS' | 'PAYABLES'>('OWN');
+  const [activeTab, setActiveTab] = useState<'OWN' | 'PARTNERS' | 'PAYABLES' | 'OWNERS'>('OWN');
   const [boats, setBoats] = useState<any[]>([]);
   const [payables, setPayables] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -27,6 +28,17 @@ export default function FleetManagement() {
   const [saving, setSaving] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Owners / Partners CRUD state
+  const [isOwnerModalOpen, setIsOwnerModalOpen] = useState(false);
+  const [editingOwnerId, setEditingOwnerId] = useState<string | null>(null);
+  const [ownerSaving, setOwnerSaving] = useState(false);
+  const [ownerFormData, setOwnerFormData] = useState({
+    name: '',
+    phone: '',
+    bank_account_info: '',
+    management_level: 'L1'
+  });
 
   // General Expenses State (Contas Gerais)
   const [isPayableModalOpen, setIsPayableModalOpen] = useState(false);
@@ -112,7 +124,7 @@ export default function FleetManagement() {
         
       if(payablesData) setPayables(payablesData);
 
-      const { data: partnersData } = await supabase.from('partners').select('id, name');
+      const { data: partnersData } = await supabase.from('partners').select('id, name, phone, bank_account_info, management_level').order('name');
       if (partnersData) setAllPartners(partnersData);
     } catch (error: any) {
       console.error('Error fetching data:', error.message);
@@ -230,6 +242,63 @@ export default function FleetManagement() {
     } catch (error: any) {
       alert('Erro ao excluir: ' + error.message);
     }
+  };
+
+  const handleSaveOwner = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (ownerSaving) return;
+    setOwnerSaving(true);
+    try {
+      const payload = {
+        name: ownerFormData.name,
+        phone: ownerFormData.phone || null,
+        bank_account_info: ownerFormData.bank_account_info || null,
+        management_level: ownerFormData.management_level
+      };
+      if (editingOwnerId) {
+        const { error } = await supabase.from('partners').update(payload).eq('id', editingOwnerId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('partners').insert([payload]);
+        if (error) throw error;
+      }
+      setIsOwnerModalOpen(false);
+      setEditingOwnerId(null);
+      setOwnerFormData({ name: '', phone: '', bank_account_info: '', management_level: 'L1' });
+      fetchData();
+    } catch (error: any) {
+      alert('Erro ao salvar parceiro: ' + error.message);
+    } finally {
+      setOwnerSaving(false);
+    }
+  };
+
+  const handleDeleteOwner = async (id: string) => {
+    if (!window.confirm('Excluir este dono/parceiro? Os barcos vinculados a ele perderão a associação.')) return;
+    try {
+      await supabase.from('boats').update({ partner_id: null }).eq('partner_id', id);
+      const { error } = await supabase.from('partners').delete().eq('id', id);
+      if (error) throw error;
+      fetchData();
+    } catch (error: any) {
+      alert('Erro ao excluir: ' + error.message);
+    }
+  };
+
+  const openOwnerModal = (owner?: any) => {
+    if (owner) {
+      setEditingOwnerId(owner.id);
+      setOwnerFormData({
+        name: owner.name || '',
+        phone: owner.phone || '',
+        bank_account_info: owner.bank_account_info || '',
+        management_level: owner.management_level || 'L1'
+      });
+    } else {
+      setEditingOwnerId(null);
+      setOwnerFormData({ name: '', phone: '', bank_account_info: '', management_level: 'L1' });
+    }
+    setIsOwnerModalOpen(true);
   };
 
   const handleSavePayable = async (e: React.FormEvent) => {
@@ -379,51 +448,7 @@ export default function FleetManagement() {
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val || 0);
 
   return (
-    <div className="min-h-screen bg-slate-950 flex text-slate-50 font-sans selection:bg-yellow-500/30">
-      
-      <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col hidden md:flex">
-        <div className="p-6 flex items-center justify-center border-b border-slate-800">
-          <img src="/logo.png" alt="Lanchas Show" className="h-16 w-auto drop-shadow-[0_0_8px_rgba(234,179,8,0.2)]" />
-        </div>
-        <div className="p-4 flex-grow">
-          <p className="text-xs uppercase tracking-widest text-gray-500 mb-4 px-4">Menu ADM</p>
-          <nav className="space-y-2">
-            <Link to="/admin/dashboard" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Ship className="w-5 h-5" />
-              <span className="font-medium text-sm">Visão 360º</span>
-            </Link>
-            <Link to="/admin/reservas" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <CalendarCheck className="w-5 h-5" />
-              <span className="font-medium text-sm">Reservas</span>
-            </Link>
-            <Link to="/admin/frota" className="flex items-center gap-3 px-4 py-3 bg-slate-800 text-yellow-500 rounded-lg border border-slate-700">
-              <Landmark className="w-5 h-5" />
-              <span className="font-medium text-sm">Gestão de Frotas</span>
-            </Link>
-            <Link to="/admin/financeiro" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Wallet className="w-5 h-5" />
-              <span className="font-medium text-sm">DRE & Caixa</span>
-            </Link>
-            <Link to="/admin/clientes" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Users className="w-5 h-5" />
-              <span className="font-medium text-sm">Clientes CRM</span>
-            </Link>
-            <Link to="/admin/ia" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Bot className="w-5 h-5" />
-              <span className="font-medium text-sm">Central IA</span>
-            </Link>
-            <Link to="/admin/calendario" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Settings className="w-5 h-5" />
-              <span className="font-medium text-sm">Temporada & Preços</span>
-            </Link>
-            <Link to="/admin/avaliacoes" className="flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors">
-              <Star className="w-5 h-5" />
-              <span className="font-medium text-sm">Avaliações</span>
-            </Link>
-          </nav>
-        </div>
-      </aside>
-
+    <AdminLayout>
       <main className="flex-1 overflow-auto flex flex-col">
         <header className="bg-slate-900/50 backdrop-blur-md border-b border-slate-800 p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shrink-0">
           <div>
@@ -459,6 +484,13 @@ export default function FleetManagement() {
               {payables.filter(p => p.status === 'PENDING').length > 0 && (
                  <span className="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded-full">{payables.filter(p => p.status === 'PENDING').length}</span>
               )}
+           </button>
+           <button 
+             onClick={() => setActiveTab('OWNERS')}
+             className={`pb-4 text-sm font-bold uppercase tracking-wider transition-colors border-b-2 flex items-center gap-2 ${activeTab === 'OWNERS' ? 'border-yellow-500 text-yellow-500' : 'border-transparent text-gray-500 hover:text-gray-300'}`}
+           >
+              Donos / Parceiros
+              <span className="bg-slate-700 text-gray-300 text-[10px] px-2 py-0.5 rounded-full">{allPartners.length}</span>
            </button>
         </div>
 
@@ -721,6 +753,96 @@ export default function FleetManagement() {
                         </table>
                     )}
                   </div>
+                  </div>
+                )}
+
+                {/* DONOS / PARCEIROS TAB */}
+                {activeTab === 'OWNERS' && (
+                  <div className="space-y-6">
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl overflow-hidden">
+                      <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+                        <div>
+                          <h2 className="text-lg font-bold text-white flex items-center gap-2"><Users className="w-5 h-5 text-yellow-500" /> Donos &amp; Parceiros</h2>
+                          <p className="text-xs text-gray-500 mt-1">Cadastre os proprietários com contato e dados de pagamento (PIX/Conta).</p>
+                        </div>
+                        <button onClick={() => openOwnerModal()} className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 text-xs font-bold px-4 py-2 rounded-lg transition-colors shadow-[0_0_15px_rgba(234,179,8,0.2)] flex items-center gap-2">
+                          <UserPlus className="w-4 h-4" /> Adicionar Dono
+                        </button>
+                      </div>
+
+                      {allPartners.length === 0 ? (
+                        <div className="p-16 text-center">
+                          <Users className="w-12 h-12 text-slate-700 mx-auto mb-4" />
+                          <p className="text-gray-500 text-sm italic">Nenhum dono/parceiro cadastrado ainda.</p>
+                          <p className="text-gray-600 text-xs mt-1">Clique em "Adicionar Dono" para começar.</p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 p-6">
+                          {allPartners.map((owner: any) => {
+                            const linkedBoats = boats.filter(b => b.partner_id === owner.id);
+                            return (
+                              <div key={owner.id} className="bg-slate-950 border border-slate-800 rounded-2xl p-5 hover:border-slate-700 transition-all group">
+                                <div className="flex justify-between items-start mb-4">
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-xl bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center shrink-0">
+                                      <span className="text-yellow-500 font-bold text-sm">{owner.name.charAt(0).toUpperCase()}</span>
+                                    </div>
+                                    <div>
+                                      <p className="text-white font-bold text-sm">{owner.name}</p>
+                                      <p className="text-[10px] text-yellow-500/60 uppercase font-bold">Parceiro {owner.management_level || 'L1'}</p>
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button onClick={() => openOwnerModal(owner)} className="p-1.5 text-gray-500 hover:text-yellow-500 transition-colors bg-slate-800 rounded-lg" title="Editar">
+                                      <Edit2 className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button onClick={() => handleDeleteOwner(owner.id)} className="p-1.5 text-gray-500 hover:text-red-500 transition-colors bg-slate-800 rounded-lg" title="Excluir">
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+
+                                <div className="space-y-2.5 mb-4">
+                                  {owner.phone ? (
+                                    <div className="flex items-center gap-2 text-xs">
+                                      <Phone className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                                      <span className="text-gray-300 font-mono">{owner.phone}</span>
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center gap-2 text-xs">
+                                      <Phone className="w-3.5 h-3.5 text-gray-700 shrink-0" />
+                                      <span className="text-gray-600 italic">Telefone não informado</span>
+                                    </div>
+                                  )}
+                                  {owner.bank_account_info ? (
+                                    <div className="flex items-start gap-2 text-xs">
+                                      <Banknote className="w-3.5 h-3.5 text-green-500 shrink-0 mt-0.5" />
+                                      <span className="text-gray-300 font-mono leading-relaxed whitespace-pre-wrap">{owner.bank_account_info}</span>
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center gap-2 text-xs">
+                                      <Banknote className="w-3.5 h-3.5 text-gray-700 shrink-0" />
+                                      <span className="text-gray-600 italic">PIX / Conta não informado</span>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {linkedBoats.length > 0 && (
+                                  <div className="pt-3 border-t border-slate-800">
+                                    <p className="text-[10px] text-gray-500 uppercase font-bold mb-2">Embarcações vinculadas</p>
+                                    <div className="flex flex-wrap gap-1">
+                                      {linkedBoats.map((b: any) => (
+                                        <span key={b.id} className="bg-slate-800 text-gray-300 text-[10px] px-2 py-0.5 rounded border border-slate-700">{b.name}</span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
             </div>
@@ -1198,6 +1320,82 @@ export default function FleetManagement() {
           </div>
         )}
       </main>
-    </div>
+
+      {/* Modal Dono / Parceiro */}
+      {isOwnerModalOpen && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+            <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <UserPlus className="w-5 h-5 text-yellow-500" />
+                {editingOwnerId ? 'Editar Dono / Parceiro' : 'Novo Dono / Parceiro'}
+              </h2>
+              <button onClick={() => setIsOwnerModalOpen(false)} className="text-gray-500 hover:text-white transition-colors">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveOwner} className="p-6 space-y-5">
+              <div>
+                <label className="text-xs text-gray-500 uppercase font-bold">Nome Completo *</label>
+                <input
+                  type="text"
+                  required
+                  value={ownerFormData.name}
+                  onChange={e => setOwnerFormData({...ownerFormData, name: e.target.value})}
+                  placeholder="Ex: João da Silva"
+                  className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-white focus:border-yellow-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-500 uppercase font-bold flex items-center gap-1"><Phone className="w-3 h-3" /> Telefone / WhatsApp</label>
+                <input
+                  type="tel"
+                  value={ownerFormData.phone}
+                  onChange={e => setOwnerFormData({...ownerFormData, phone: e.target.value})}
+                  placeholder="Ex: (47) 99999-0000"
+                  className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-white focus:border-yellow-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-500 uppercase font-bold flex items-center gap-1"><Banknote className="w-3 h-3" /> PIX / Dados Bancários</label>
+                <textarea
+                  rows={3}
+                  value={ownerFormData.bank_account_info}
+                  onChange={e => setOwnerFormData({...ownerFormData, bank_account_info: e.target.value})}
+                  placeholder={"Ex: PIX: 47 99999-0000 (CPF)\nBanco Itaú — Ag: 0001 — CC: 12345-6"}
+                  className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-white focus:border-yellow-500 focus:outline-none font-mono text-sm resize-none"
+                />
+                <p className="text-[10px] text-gray-600 mt-1">Cole aqui a chave PIX, banco e conta. Aparecerá na ficha do barco para referência de repasse.</p>
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-500 uppercase font-bold">Nível de Parceria</label>
+                <select
+                  value={ownerFormData.management_level}
+                  onChange={e => setOwnerFormData({...ownerFormData, management_level: e.target.value})}
+                  className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2.5 text-white focus:border-yellow-500 focus:outline-none"
+                >
+                  <option value="L1">L1 — Com Agenda (Lanchas Show gerencia tudo)</option>
+                  <option value="L2">L2 — Sob Consulta (Dono confirma cada reserva)</option>
+                </select>
+              </div>
+
+              <div className="pt-4 flex justify-end gap-3 border-t border-slate-800">
+                <button type="button" onClick={() => setIsOwnerModalOpen(false)} className="px-4 py-2 text-gray-400 font-bold hover:text-white transition-colors">
+                  Cancelar
+                </button>
+                <button type="submit" disabled={ownerSaving} className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 font-bold px-6 py-2 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2">
+                  {ownerSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  {editingOwnerId ? 'Salvar Alterações' : 'Cadastrar Parceiro'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </AdminLayout>
   );
 }
