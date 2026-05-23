@@ -9,7 +9,10 @@ import {
   updateCustomerCPF,
   askOwnersGroup,
   broadcastPromotion,
-  completeBoarding
+  completeBoarding,
+  searchClientConversations,
+  getReservationsSummary,
+  getFinancialSummary
 } from './db';
 
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
@@ -718,13 +721,91 @@ const OWNERS_TOOLS: any[] = [
       },
       required: ['conversation_id', 'answer']
     }
+  },
+  {
+    name: 'search_client',
+    description: 'Busca informações sobre um cliente ou conversa por nome ou telefone. Retorna o histórico de conversa, estágio da negociação, reservas ativas e mensagens recentes. Use quando um proprietário perguntar sobre um cliente específico (ex: "como está o Isaías?", "a Maria fechou?", "o que aconteceu com o cliente 47999...").',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Nome do cliente ou número de telefone para buscar.'
+        }
+      },
+      required: ['query']
+    }
+  },
+  {
+    name: 'get_reservations',
+    description: 'Consulta reservas no sistema com filtros opcionais por data, cliente, barco ou status. Use quando perguntarem sobre reservas, agenda, ou passeios agendados.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        date: {
+          type: 'string',
+          description: 'Data específica no formato YYYY-MM-DD para filtrar reservas.'
+        },
+        date_from: {
+          type: 'string',
+          description: 'Data inicial do período (YYYY-MM-DD).'
+        },
+        date_to: {
+          type: 'string',
+          description: 'Data final do período (YYYY-MM-DD).'
+        },
+        client_name: {
+          type: 'string',
+          description: 'Nome do cliente para filtrar.'
+        },
+        boat_name: {
+          type: 'string',
+          description: 'Nome do barco para filtrar (ex: Tecnomarine, Phantom).'
+        },
+        status: {
+          type: 'string',
+          description: 'Status da reserva para filtrar (PENDING, CONFIRMED, COMPLETED, BLOCKED, etc).'
+        }
+      }
+    }
+  },
+  {
+    name: 'get_financials',
+    description: 'Consulta o resumo financeiro (DRE) da empresa: receita bruta, custos, despesas, lucro líquido, lucro de intermediação de parceiros, sinal recebido. Use quando perguntarem sobre faturamento, receita, lucro, custos, ou balanço.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        period: {
+          type: 'string',
+          enum: ['today', 'month', 'custom'],
+          description: 'Período do resumo: today (hoje), month (mês atual), custom (período personalizado com date_from/date_to).'
+        },
+        date_from: {
+          type: 'string',
+          description: 'Data inicial para período custom (YYYY-MM-DD).'
+        },
+        date_to: {
+          type: 'string',
+          description: 'Data final para período custom (YYYY-MM-DD).'
+        }
+      },
+      required: ['period']
+    }
   }
 ];
 
-const OWNERS_SYSTEM_PROMPT = `Você é Isabelle, Executiva de Vendas e Gerente da Lanchas Show.
+const OWNERS_SYSTEM_PROMPT = `Você é Isabelle, Executiva de Vendas, Gerente e Secretária Executiva da Lanchas Show.
 Aqui você está conversando no grupo interno dos PROPRIETÁRIOS (donos) das lanchas.
 
-Seu objetivo é ajudar os proprietários a gerenciar a agenda e enviar avisos em massa para os clientes.
+Seu objetivo é ajudar os proprietários a gerenciar TODA a operação da empresa. Você tem acesso total ao sistema e pode:
+- Gerenciar a agenda de reservas e bloqueios
+- Buscar informações sobre qualquer cliente ou conversa em andamento
+- Consultar reservas por data, barco ou cliente
+- Informar faturamento diário, mensal, bruto, líquido e detalhado
+- Enviar promoções em massa para clientes
+- Confirmar embarques
+- Responder dúvidas de clientes
+- Qualquer outra consulta ao sistema
 
 AÇÕES SUPORTADAS:
 
@@ -777,7 +858,31 @@ AÇÕES SUPORTADAS:
     - Chame IMEDIATAMENTE a tool 'answer_client_question' passando o 'conversation_id' da pergunta pendente e a 'answer' com a informação fornecida pelo proprietário.
     - A ferramenta vai formular uma resposta adequada e enviar automaticamente para o cliente.
     - Após chamar a ferramenta, confirme no grupo que a resposta foi enviada ao cliente.
-    - PRIORIZE SEMPRE responder perguntas pendentes de clientes. Se um dono disser algo que pode ser resposta a uma dúvida pendente, trate como resposta primeiro.
+    - REGRAS IMPORTANTES PARA EVITAR CONFUSÃO DE REGRAS:
+      * Trate uma mensagem do proprietário como a resposta para a dúvida pendente APENAS se ela for de fato uma afirmação ou resposta direta para o cliente (ex: "emite sim", "o marinheiro é Cleberson").
+      * NUNCA chame a tool 'answer_client_question' se o proprietário estiver fazendo uma pergunta sobre o status daquele cliente (ex: "como ficou o Isaías?", "fechou?", "o Isaías reservou?"). Perguntas do proprietário devem ser tratadas sob a Regra 7 abaixo, usando as ferramentas de busca de cliente ou reservas, respondendo-os diretamente no grupo!
+      * NUNCA prometa ou diga no seu texto de resposta que vai repassar a resposta/mensagem ao cliente a menos que você esteja chamando efetivamente a ferramenta 'answer_client_question' nesse mesmo turno de execução.
+
+7. CONSULTAS DO SISTEMA (SECRETÁRIA / ASSISTENTE OPERACIONAL):
+    Se os proprietários fizerem perguntas sobre a operação, clientes ou relatórios:
+    - PERGUNTA SOBRE CLIENTE OU NEGOCIAÇÃO (ex: "como ficou o Isaías?", "o Isaías fechou?", "como está a negociação com X?", "o cliente de hoje já pagou?"):
+      * Chame a ferramenta 'search_client' com o nome ou telefone do cliente pesquisado.
+      * Com o resultado retornado, responda de forma resumida e direta aos donos informando:
+        1. O estágio atual da conversa (ex: Novo, Negociação, Pagamento, Concluído).
+        2. Se há alguma reserva registrada no sistema e qual o status dela (ex: PENDENTE, CONFIRMADO, CONCLUÍDO).
+        3. Detalhes pendentes relevantes (ex: "estamos aguardando o sinal de R$ 11.150 para confirmar", "ele acabou de responder que vai confirmar com o grupo").
+    - PERGUNTA SOBRE RESERVAS / AGENDA (ex: "quais lanchas saem amanhã?", "como está a agenda da Phantom?", "quem navega hoje?"):
+      * Chame a ferramenta 'get_reservations' com filtros adequados (ex: date, date_from, date_to, boat_name, etc.).
+      * Responda de forma clara, listando o barco, o nome do cliente, o status da reserva (Pendente, Confirmado, Concluído, etc.) e o valor total se relevante.
+    - PERGUNTA SOBRE FATURAMENTO / DRE / BALANÇO (ex: "quanto faturei hoje?", "como está o faturamento mensal?", "faturamento líquido ou bruto?"):
+      * Chame a ferramenta 'get_financials' informando o período correto ('today' para hoje, 'month' para o mês atual, ou 'custom' se for uma data ou intervalo específico).
+      * Formate a resposta de forma muito profissional e executiva (resumo executivo):
+        - Receita Bruta
+        - Custos de Saída (originais)
+        - Despesas Operacionais (lançadas no caixa)
+        - Lucro Líquido do período
+        - Total de Sinal Recebido (sinal que de fato já entrou)
+        - Listagem breve ou contagem dos barcos que saíram e contribuíram para o resultado.
 
 Responda sempre de forma prestativa, organizada e profissional.`;
 
@@ -900,6 +1005,15 @@ REGRAS ADICIONAIS DE DATA:
           } else if (toolName === 'complete_boarding') {
             const boardingResult = await completeBoarding(toolArgs);
             resultString = JSON.stringify(boardingResult);
+          } else if (toolName === 'search_client') {
+            const searchResult = await searchClientConversations(toolArgs.query);
+            resultString = JSON.stringify(searchResult);
+          } else if (toolName === 'get_reservations') {
+            const resResult = await getReservationsSummary(toolArgs);
+            resultString = JSON.stringify(resResult);
+          } else if (toolName === 'get_financials') {
+            const finResult = await getFinancialSummary(toolArgs.period, toolArgs.date_from, toolArgs.date_to);
+            resultString = JSON.stringify(finResult);
           } else if (toolName === 'answer_client_question') {
             try {
               const { supabaseAdmin: supa } = await import('./supabase');

@@ -689,3 +689,304 @@ export async function completeBoarding(data: {
     return { success: false, error: error.message || 'Erro interno ao registrar embarque.' };
   }
 }
+
+/**
+ * Searches client conversations by name or phone number.
+ * Returns conversation details, stage, status, and recent messages.
+ */
+export async function searchClientConversations(query: string) {
+  try {
+    // Search by name (ilike) or by phone (contains)
+    const cleanQuery = query.replace(/\D/g, '');
+    
+    let conversations: any[] = [];
+
+    // Search by name
+    const { data: byName } = await supabaseAdmin
+      .from('ia_conversations')
+      .select('id, contact_name, contact_phone, stage, status, subject, target_date, created_at, pending_owners_question')
+      .ilike('contact_name', `%${query}%`)
+      .order('created_at', { ascending: false })
+      .limit(10);
+    
+    if (byName) conversations.push(...byName);
+
+    // Also search by phone if the query has digits
+    if (cleanQuery.length >= 4) {
+      const { data: byPhone } = await supabaseAdmin
+        .from('ia_conversations')
+        .select('id, contact_name, contact_phone, stage, status, subject, target_date, created_at, pending_owners_question')
+        .ilike('contact_phone', `%${cleanQuery}%`)
+        .order('created_at', { ascending: false })
+        .limit(10);
+      
+      if (byPhone) {
+        const existingIds = new Set(conversations.map(c => c.id));
+        byPhone.forEach(c => { if (!existingIds.has(c.id)) conversations.push(c); });
+      }
+    }
+
+    // Exclude group conversations
+    conversations = conversations.filter(c => !c.contact_phone?.endsWith('@g.us'));
+
+    // For each conversation, fetch last 5 messages for context
+    const results = [];
+    for (const conv of conversations.slice(0, 5)) {
+      const { data: messages } = await supabaseAdmin
+        .from('ia_messages')
+        .select('sender, content, created_at')
+        .eq('conversation_id', conv.id)
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      // Also check if there are any active reservations for this customer
+      let reservationInfo = null;
+      const { data: customer } = await supabaseAdmin
+        .from('customers')
+        .select('id')
+        .eq('phone', conv.contact_phone)
+        .maybeSingle();
+      
+      if (customer) {
+        const { data: reservations } = await supabaseAdmin
+          .from('reservations')
+          .select('id, status, start_date, total_price, total_reservation_value, paid_amount, boats(name)')
+          .eq('customer_id', customer.id)
+          .not('status', 'in', '("CANCELLED","NO_SHOW")')
+          .order('start_date', { ascending: false })
+          .limit(3);
+        
+        if (reservations && reservations.length > 0) {
+          reservationInfo = reservations.map((r: any) => ({
+            id: r.id,
+            status: r.status,
+            date: r.start_date?.substring(0, 10),
+            boat: r.boats?.name,
+            total_price: Number(r.total_price) || Number(r.total_reservation_value) || 0,
+            paid_amount: Number(r.paid_amount) || 0
+          }));
+        }
+      }
+
+      results.push({
+        conversation_id: conv.id,
+        client_name: conv.contact_name,
+        client_phone: conv.contact_phone,
+        stage: conv.stage,
+        status: conv.status,
+        target_date: conv.target_date,
+        pending_question: conv.pending_owners_question || null,
+        reservations: reservationInfo,
+        recent_messages: (messages || []).reverse().map(m => ({
+          sender: m.sender,
+          content: m.content?.substring(0, 200),
+          time: m.created_at
+        }))
+      });
+    }
+
+    return { success: true, results, total_found: conversations.length };
+  } catch (error: any) {
+    console.error(`[DB Helper] Error searching client conversations:`, error);
+    return { error: error.message || 'Erro ao buscar conversas.' };
+  }
+}
+
+/**
+ * Gets a summary of reservations with optional filters.
+ */
+export async function getReservationsSummary(filters: {
+  date?: string;
+  date_from?: string;
+  date_to?: string;
+  client_name?: string;
+  boat_name?: string;
+  status?: string;
+}) {
+  try {
+    let query = supabaseAdmin
+      .from('reservations')
+      .select('id, status, start_date, end_date, total_price, total_reservation_value, base_price_closed, paid_amount, commission_value, boarding_point, destination, passenger_count, notes, boats(name, owner_type), customers(full_name, phone)')
+      .order('start_date', { ascending: false });
+
+    // Apply filters
+    if (filters.status) {
+      query = query.eq('status', filters.status.toUpperCase());
+    } else {
+      query = query.not('status', 'in', '("CANCELLED","NO_SHOW")');
+    }
+
+    const { data: reservations, error } = await query.limit(50);
+    if (error) throw error;
+
+    let results = (reservations || []).map((r: any) => ({
+      id: r.id,
+      status: r.status,
+      date: r.start_date?.substring(0, 10),
+      boat: r.boats?.name,
+      boat_type: r.boats?.owner_type,
+      client: r.customers?.full_name,
+      client_phone: r.customers?.phone,
+      total_price: Number(r.total_price) || Number(r.total_reservation_value) || 0,
+      paid_amount: Number(r.paid_amount) || 0,
+      commission: Number(r.commission_value) || 0,
+      destination: r.destination,
+      passengers: r.passenger_count,
+      notes: r.notes
+    }));
+
+    // Filter by date
+    if (filters.date) {
+      results = results.filter(r => r.date === filters.date);
+    }
+    if (filters.date_from) {
+      results = results.filter(r => r.date && r.date >= filters.date_from!);
+    }
+    if (filters.date_to) {
+      results = results.filter(r => r.date && r.date <= filters.date_to!);
+    }
+
+    // Filter by client name
+    if (filters.client_name) {
+      const search = filters.client_name.toLowerCase();
+      results = results.filter(r => r.client?.toLowerCase().includes(search));
+    }
+
+    // Filter by boat name
+    if (filters.boat_name) {
+      const search = filters.boat_name.toLowerCase();
+      results = results.filter(r => r.boat?.toLowerCase().includes(search));
+    }
+
+    const totalRevenue = results.reduce((sum, r) => sum + r.total_price, 0);
+    const totalPaid = results.reduce((sum, r) => sum + r.paid_amount, 0);
+
+    return {
+      success: true,
+      total_reservations: results.length,
+      total_revenue: totalRevenue,
+      total_paid: totalPaid,
+      reservations: results.slice(0, 20)
+    };
+  } catch (error: any) {
+    console.error(`[DB Helper] Error getting reservations summary:`, error);
+    return { error: error.message || 'Erro ao buscar reservas.' };
+  }
+}
+
+/**
+ * Gets financial summary (DRE-style) for a given period.
+ */
+export async function getFinancialSummary(period: 'today' | 'month' | 'custom', dateFrom?: string, dateTo?: string) {
+  try {
+    const now = new Date();
+    const localStr = now.toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+    const todayStr = localStr.substring(0, 10);
+
+    let periodStart: string;
+    let periodEnd: string;
+
+    if (period === 'today') {
+      periodStart = todayStr;
+      periodEnd = todayStr;
+    } else if (period === 'month') {
+      periodStart = todayStr.substring(0, 7) + '-01';
+      periodEnd = todayStr;
+    } else {
+      periodStart = dateFrom || todayStr;
+      periodEnd = dateTo || todayStr;
+    }
+
+    // Fetch reservations in the period
+    const { data: reservations } = await supabaseAdmin
+      .from('reservations')
+      .select('id, status, start_date, total_price, total_reservation_value, paid_amount, commission_value, boats(name, owner_type, original_rate, partner_net_value), customers(full_name)')
+      .not('status', 'in', '("CANCELLED","NO_SHOW","BLOCKED")');
+
+    // Fetch cash transactions in the period
+    const { data: transactions } = await supabaseAdmin
+      .from('cash_transactions')
+      .select('type, amount, description, created_at');
+
+    let receitaBruta = 0;
+    let custosSaida = 0;
+    let lucroIntermediacao = 0;
+    let totalSinalRecebido = 0;
+    const boatBreakdown: any[] = [];
+
+    (reservations || []).forEach((r: any) => {
+      const resDate = r.start_date?.substring(0, 10);
+      if (!resDate || resDate < periodStart || resDate > periodEnd) return;
+
+      const boat = r.boats;
+      if (!boat) return;
+
+      const totalPrice = Number(r.total_price) || Number(r.total_reservation_value) || 0;
+      const opCost = r.status === 'COMPLETED' ? Number(boat.original_rate || 0) : 0;
+      const paid = Number(r.paid_amount) || 0;
+
+      totalSinalRecebido += paid;
+
+      if (boat.owner_type === 'OWN') {
+        receitaBruta += totalPrice;
+        custosSaida += opCost;
+        boatBreakdown.push({
+          boat: boat.name,
+          type: 'Frota Própria',
+          client: r.customers?.full_name || 'N/A',
+          date: resDate,
+          status: r.status,
+          revenue: totalPrice,
+          cost: opCost,
+          profit: totalPrice - opCost,
+          paid: paid
+        });
+      } else {
+        const commission = Number(r.commission_value) || 0;
+        const partnerNet = r.status === 'COMPLETED' ? Number(boat.partner_net_value || 0) : 0;
+        const profit = r.status === 'COMPLETED' ? (commission > 0 ? commission : totalPrice - partnerNet) : 0;
+        lucroIntermediacao += profit;
+        boatBreakdown.push({
+          boat: boat.name,
+          type: 'Parceiro',
+          client: r.customers?.full_name || 'N/A',
+          date: resDate,
+          status: r.status,
+          revenue: totalPrice,
+          cost: partnerNet,
+          profit: profit,
+          paid: paid
+        });
+      }
+    });
+
+    // Cash transaction expenses in the period
+    let despesasOperacionais = 0;
+    (transactions || []).filter((tx: any) => {
+      const txDate = tx.created_at?.substring(0, 10);
+      return tx.type === 'EXPENSE' && txDate >= periodStart && txDate <= periodEnd;
+    }).forEach((tx: any) => {
+      despesasOperacionais += Number(tx.amount) || 0;
+    });
+
+    const lucroLiquidoFrotaPropria = receitaBruta - custosSaida - despesasOperacionais;
+    const lucroTotal = lucroLiquidoFrotaPropria + lucroIntermediacao;
+
+    return {
+      success: true,
+      period: { from: periodStart, to: periodEnd },
+      receita_bruta: receitaBruta,
+      custos_saida_frota_propria: custosSaida,
+      despesas_operacionais: despesasOperacionais,
+      lucro_liquido_frota_propria: lucroLiquidoFrotaPropria,
+      lucro_intermediacao_parceiros: lucroIntermediacao,
+      lucro_total: lucroTotal,
+      total_sinal_recebido: totalSinalRecebido,
+      total_reservas_no_periodo: boatBreakdown.length,
+      detalhamento: boatBreakdown
+    };
+  } catch (error: any) {
+    console.error(`[DB Helper] Error getting financial summary:`, error);
+    return { error: error.message || 'Erro ao calcular resumo financeiro.' };
+  }
+}
