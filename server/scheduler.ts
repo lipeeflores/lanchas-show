@@ -261,12 +261,71 @@ export async function checkPostTrips(): Promise<void> {
 }
 
 /**
+ * Checks if there are any active AI-controlled conversations scheduled for today (target_date = today)
+ * that have not closed yet, and proactively messages them at 9:00 AM.
+ */
+export async function checkSameDay9AmFollowUps(): Promise<void> {
+  try {
+    const localStr = new Date().toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' }); // "YYYY-MM-DD HH:MM:SS"
+    const localDate = localStr.substring(0, 10);
+    const localHour = Number(localStr.substring(11, 13));
+
+    // We only trigger this during the 9:00 AM hour (9:00 - 9:59)
+    if (localHour !== 9) {
+      return;
+    }
+
+    console.log(`[Scheduler] 9 AM check: looking for same-day bookings on date ${localDate}`);
+
+    const { data: conversations, error: convError } = await supabaseAdmin
+      .from('ia_conversations')
+      .select('*')
+      .eq('status', 'AI_CONTROL')
+      .eq('target_date', localDate)
+      .in('stage', ['novo', 'cotado', 'sinal_solicitado', 'pix_enviado']);
+
+    if (convError) throw convError;
+    if (!conversations || conversations.length === 0) {
+      console.log('[Scheduler] No same-day pending conversations found for today.');
+      return;
+    }
+
+    for (const conv of conversations) {
+      // Check if we already messaged them today with a 9am reminder
+      const { data: todayMessages, error: msgError } = await supabaseAdmin
+        .from('ia_messages')
+        .select('*')
+        .eq('conversation_id', conv.id)
+        .gte('created_at', `${localDate}T00:00:00Z`);
+
+      if (msgError) {
+        console.error(`[Scheduler] Error fetching today's messages for conv ${conv.id}:`, msgError);
+        continue;
+      }
+
+      const alreadySent = (todayMessages || []).some(m => 
+        m.sender === 'IA' && 
+        (m.content.includes('saída oficial') || m.content.includes('garantir a navegação'))
+      );
+
+      if (!alreadySent) {
+        const text = `Bom dia! 🛥️ Vi que seu passeio estava planejado para hoje. Como a saída oficial das lanchas é às 10h, ainda dá tempo de aproveitar o dia e garantir a navegação! Vamos fechar?`;
+        await sendFollowUp(conv.id, conv.contact_phone, text);
+      }
+    }
+  } catch (error) {
+    console.error('[Scheduler] Error in checkSameDay9AmFollowUps:', error);
+  }
+}
+
+/**
  * Starts the hourly cron job.
  */
 export function startScheduler(): void {
   // '0 * * * *' = every hour at minute 0
   cron.schedule('0 * * * *', async () => {
     await checkFollowUps();
+    await checkSameDay9AmFollowUps();
     await checkPostTrips();
   });
   console.log('[Scheduler] Hourly follow-up and post-trip evaluation cron job initialized.');

@@ -285,7 +285,7 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
               // Reload conversation mode to check if it's still AI_CONTROL
               const { data: currentConv } = await supabaseAdmin
                 .from('ia_conversations')
-                .select('status, id')
+                .select('status, id, contact_name, contact_phone')
                 .eq('contact_phone', phone)
                 .single();
 
@@ -307,7 +307,12 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
               const chronologicalHistory = (history || []).reverse();
 
               // Call Claude to formulate response
-              const aiResponseText = await getAiResponse(currentConv.id, chronologicalHistory);
+              const aiResponseText = await getAiResponse(
+                currentConv.id,
+                chronologicalHistory,
+                currentConv.contact_name || pushName || '',
+                currentConv.contact_phone || phone || ''
+              );
 
               if (!aiResponseText || !aiResponseText.trim()) return;
 

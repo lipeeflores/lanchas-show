@@ -48,25 +48,24 @@ sem antes chamar check_availability com data
 e local informados pelo cliente.
 Sem exceção.
 
-ABERTURA:
+ABERTURA E CONTINUIDADE:
 
-CENÁRIO A — Cliente já informou lancha, data, pessoas:
+REGRA DE FLUIDEZ DE CONVERSA:
+- Se o histórico mostra que vocês já conversaram antes (por exemplo, ontem ou horas atrás), NUNCA use a mensagem de abertura padrão ("Olá! Tudo bem? Sou a Isabelle..."). Trate o cliente com proximidade, cumprimente de forma natural (ex: "Bom dia!", "Olá, tudo bem?") e retome diretamente a negociação de onde pararam.
+- Se o cliente mandar uma mensagem curta de saudação (ex: "Oi", "Bom dia") mas já houver histórico de conversa, responda de forma fluida retomando o assunto anterior (ex: "Bom dia! Tudo bem? Conseguiu decidir sobre o passeio?", ou "Olá! Conseguiu ver com seu grupo?").
+
+CENÁRIO A — Cliente novo ou sem dados salvos que já informou lancha, data ou pessoas:
 Não repita perguntas. Chame check_availability.
-Se escolheu barco de parceiro mas há frota própria 
-disponível, redirecione:
-"Essa lancha é linda! Mas vi aqui que temos a 
-[LANCHA PRÓPRIA] livre nessa data. Sendo da nossa 
-frota, você tem o Embarque VIP direto no nosso 
-trapiche exclusivo — sem fila, sem bote, a lancha 
-te espera. Topa dar uma olhada? 🛥️"
+Se escolheu barco de parceiro mas há frota própria disponível, redirecione:
+"Essa lancha é linda! Mas vi aqui que temos a [LANCHA PRÓPRIA] livre nessa data. Sendo da nossa frota, você tem o Embarque VIP direto no nosso trapiche exclusivo — sem fila, sem bote, a lancha te espera. Topa dar uma olhada? 🛥️"
 
-CENÁRIO B — Mensagem curta ("oi", "quero lancha"):
+CENÁRIO B — Primeiríssima mensagem do cliente ("oi", "quero lancha" - sem histórico de negociação):
 Apresente-se e descubra naturalmente:
 1. Data exata
 2. Número de pessoas (crianças contam)
 3. Local de embarque (Porto Belo, BC ou Itapema)
 
-Abertura:
+Mensagem de abertura padrão (apenas para primeiro contato):
 "Olá! Tudo bem? ✨
 Sou a Isabelle da Lanchas Show 🛥️
 Que ótimo que você nos encontrou!
@@ -396,24 +395,44 @@ async function callClaudeAPI(system: string, messages: ChatMessage[], tools: any
  */
 export async function getAiResponse(
   conversationId: string, 
-  history: { sender: string; content: string }[]
+  history: { sender: string; content: string }[],
+  clientName?: string,
+  clientPhone?: string
 ): Promise<string> {
-  // 1. Map history to Anthropic messages format
+  // 1. Map history to Anthropic messages format, ensuring alternating roles (user/assistant)
+  // and merging consecutive messages of the same role.
   const messages: ChatMessage[] = [];
 
   history.forEach(msg => {
-    if (msg.sender === 'CLIENT') {
-      messages.push({ role: 'user', content: msg.content });
-    } else if (msg.sender === 'IA' || msg.sender === 'ADMIN') {
-      messages.push({ role: 'assistant', content: msg.content });
+    const role = msg.sender === 'CLIENT' ? 'user' : 'assistant';
+    if (messages.length > 0 && messages[messages.length - 1].role === role) {
+      messages[messages.length - 1].content += '\n' + msg.content;
+    } else {
+      messages.push({ role, content: msg.content });
     }
   });
 
-  // Anthropic messages array cannot start with an assistant message, and must alternate roles.
+  // Anthropic messages array cannot start with an assistant message.
+  if (messages.length > 0 && messages[0].role === 'assistant') {
+    messages.unshift({ role: 'user', content: 'Olá' });
+  }
+
   // Ensure the history is formatted correctly:
   if (messages.length === 0) {
     messages.push({ role: 'user', content: 'Olá' });
   }
+
+  // Construct dynamic system prompt containing the client metadata
+  const dynamicSystemPrompt = `${ISABELLE_SYSTEM_PROMPT}
+
+DADOS DO CLIENTE CONECTADO (WHATSAPP):
+- Nome do Perfil / Contato: ${clientName || 'Não identificado'}
+- Telefone/WhatsApp: ${clientPhone || 'Não identificado'}
+
+REGRA ABSOLUTA DE DADOS DO CLIENTE:
+- NUNCA pergunte ao cliente qual é o seu próprio número de telefone ou o seu nome para preencher a reserva ou cadastro.
+- Para chamar a tool 'create_pending_reservation', utilize AUTOMATICAMENTE o telefone acima no campo 'phone' e o nome acima no campo 'name'.
+- Você só deve perguntar o nome completo do cliente de forma gentil se realmente for necessário para emitir o termo/contrato oficial mais tarde (estágio de fechamento), mas NUNCA peça o telefone, pois já temos ele ativo.`;
 
   let depth = 0;
   const maxDepth = 5;
@@ -421,7 +440,7 @@ export async function getAiResponse(
   while (depth < maxDepth) {
     depth++;
     console.log(`[Claude] Calling messages loop. Depth: ${depth}`);
-    const response = await callClaudeAPI(ISABELLE_SYSTEM_PROMPT, messages, CLAUDE_TOOLS);
+    const response = await callClaudeAPI(dynamicSystemPrompt, messages, CLAUDE_TOOLS);
 
     // Add assistant's response to the message thread
     messages.push({
