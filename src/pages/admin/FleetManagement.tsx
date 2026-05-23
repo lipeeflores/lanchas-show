@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom';
 import AdminLayout from '../../components/AdminLayout';
 
 export default function FleetManagement() {
-  const [activeTab, setActiveTab] = useState<'OWN' | 'PARTNERS' | 'PAYABLES' | 'OWNERS'>('OWN');
+  const [activeTab, setActiveTab] = useState<'OWN' | 'PARTNERS' | 'PAYABLES' | 'OWNERS' | 'CONTRACT_TEMPLATE'>('OWN');
   const [boats, setBoats] = useState<any[]>([]);
   const [payables, setPayables] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -16,8 +16,10 @@ export default function FleetManagement() {
     name: '', capacity: 10, size: 30, image: '', daily_rate: 0, original_rate: 0, 
     has_floating_mat: false, floating_mat_price: 300, extra_hour_price: 1000,
     owner_type: 'OWN', partner_id: '', boarding_points: [] as string[], allowed_destinations: [] as string[], status: 'AVAILABLE',
-    description: '', include_captain: true, include_fuel: true
+    description: '', include_captain: true, include_fuel: true, catalogo_url: ''
   });
+  const [contractHtml, setContractHtml] = useState<string>('');
+  const [contractSaving, setContractSaving] = useState<boolean>(false);
   // Route-based pricing
   const [boatRoutes, setBoatRoutes] = useState<any[]>([]);
   const [routeForm, setRouteForm] = useState({ embarkation_point: '', destination_point: '', price_low_season: 0, min_price_low_season: 0, price_weekend_holiday: 0, min_price_weekend_holiday: 0, price_high_season: 0, min_price_high_season: 0 });
@@ -137,6 +139,43 @@ export default function FleetManagement() {
     fetchData();
   }, []);
 
+  const fetchContractTemplate = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('contratos_template')
+        .select('html_content')
+        .eq('id', 'default')
+        .maybeSingle();
+      if (error) throw error;
+      if (data) {
+        setContractHtml(data.html_content);
+      }
+    } catch (err: any) {
+      console.error('Error fetching contract template:', err.message);
+    }
+  };
+
+  const handleSaveContractTemplate = async () => {
+    setContractSaving(true);
+    try {
+      const { error } = await supabase
+        .from('contratos_template')
+        .upsert({ id: 'default', html_content: contractHtml, updated_at: new Date().toISOString() });
+      if (error) throw error;
+      alert('Template de contrato atualizado com sucesso!');
+    } catch (err: any) {
+      alert('Erro ao salvar template: ' + err.message);
+    } finally {
+      setContractSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'CONTRACT_TEMPLATE') {
+      fetchContractTemplate();
+    }
+  }, [activeTab]);
+
   const openModal = async (boat?: any) => {
     setShowRouteForm(false);
     if (boat) {
@@ -158,7 +197,8 @@ export default function FleetManagement() {
         status: boat.status || 'AVAILABLE',
         description: boat.description || '',
         include_captain: boat.include_captain ?? true,
-        include_fuel: boat.include_fuel ?? true
+        include_fuel: boat.include_fuel ?? true,
+        catalogo_url: boat.catalogo_url || ''
       });
       setImageUrls(boat.image_urls || (boat.image ? [boat.image] : []));
       const { data: routesData } = await supabase.from('boat_routes_pricing').select('*').eq('boat_id', boat.id).order('created_at');
@@ -170,7 +210,7 @@ export default function FleetManagement() {
          has_floating_mat: false, floating_mat_price: 300, extra_hour_price: 1000,
          owner_type: activeTab === 'PARTNERS' ? 'PARTNER_L1' : 'OWN', partner_id: '', 
          boarding_points: ['Porto Belo'], allowed_destinations: ["Caixa d'Aço", "Praia da Sepultura"], status: 'AVAILABLE',
-         description: '', include_captain: true, include_fuel: true
+         description: '', include_captain: true, include_fuel: true, catalogo_url: ''
       });
       setImageUrls([]);
       setBoatRoutes([]);
@@ -407,7 +447,8 @@ export default function FleetManagement() {
         status: formData.status,
         description: formData.description,
         include_captain: formData.include_captain,
-        include_fuel: formData.include_fuel
+        include_fuel: formData.include_fuel,
+        catalogo_url: formData.catalogo_url || null
       };
 
       let boatId = editingBoatId;
@@ -464,7 +505,7 @@ export default function FleetManagement() {
   return (
     <AdminLayout>
       <main className="flex-1 overflow-auto flex flex-col">
-        <header className="bg-slate-900/50 backdrop-blur-md border-b border-slate-800 p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shrink-0">
+<header className="bg-slate-900/50 backdrop-blur-md border-b border-slate-800 p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shrink-0">
           <div>
             <h1 className="text-2xl font-serif font-bold text-white">Gestão Financeira & Frota</h1>
             <p className="text-sm text-gray-400">Gerenciar detalhes dos barcos, rateio e marcação B2C</p>
@@ -505,6 +546,12 @@ export default function FleetManagement() {
            >
               Donos / Parceiros
               <span className="bg-slate-700 text-gray-300 text-[10px] px-2 py-0.5 rounded-full">{allPartners.length}</span>
+           </button>
+           <button 
+             onClick={() => setActiveTab('CONTRACT_TEMPLATE')}
+             className={`pb-4 text-sm font-bold uppercase tracking-wider transition-colors border-b-2 flex items-center gap-2 shrink-0 ${activeTab === 'CONTRACT_TEMPLATE' ? 'border-yellow-500 text-yellow-500' : 'border-transparent text-gray-500 hover:text-gray-300'}`}
+           >
+              Termo / Contrato
            </button>
         </div>
 
@@ -863,6 +910,92 @@ export default function FleetManagement() {
                     </div>
                   </div>
                 )}
+
+                {/* CONTRACT TEMPLATE TAB */}
+                {activeTab === 'CONTRACT_TEMPLATE' && (
+                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
+                    <div>
+                      <h2 className="text-xl font-serif font-bold text-white flex items-center gap-2">
+                        <FileText className="w-5 h-5 text-yellow-500" />
+                        Template do Contrato de Locação
+                      </h2>
+                      <p className="text-sm text-gray-400 mt-1">
+                        Customize o HTML base utilizado para gerar o PDF oficial de locação. Você pode usar tags dinâmicas que serão substituídas na emissão do contrato.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                      <div className="lg:col-span-2 space-y-4">
+                        <div>
+                          <label className="text-xs text-gray-400 uppercase font-bold block mb-2">HTML do Termo de Locação</label>
+                          <textarea
+                            rows={22}
+                            value={contractHtml}
+                            onChange={(e) => setContractHtml(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg p-4 text-gray-300 font-mono text-xs focus:border-yellow-500 outline-none resize-none leading-relaxed"
+                            placeholder="<html><body>...</body></html>"
+                          />
+                        </div>
+
+                        <div className="flex justify-end">
+                          <button
+                            type="button"
+                            onClick={handleSaveContractTemplate}
+                            disabled={contractSaving}
+                            className="bg-yellow-500 hover:bg-yellow-400 text-slate-900 font-bold px-6 py-2.5 rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50"
+                          >
+                            {contractSaving ? <Loader2 className="w-4 h-4 animate-spin"/> : <Save className="w-4 h-4"/>}
+                            Salvar Alterações
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-4 bg-slate-950 p-5 rounded-xl border border-slate-800">
+                        <h3 className="text-xs text-yellow-500 uppercase font-black tracking-wider">Tags Dinâmicas Disponíveis</h3>
+                        <p className="text-[10px] text-gray-400 font-medium">Copie e cole estas chaves no HTML. O sistema substituirá automaticamente pelos dados da reserva:</p>
+                        
+                        <div className="space-y-3 pt-2 text-xs">
+                          <div>
+                            <code className="text-yellow-400 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800 font-mono font-bold">{"{{nome_cliente}"}</code>
+                            <span className="text-gray-400 ml-2">Nome do cliente</span>
+                          </div>
+                          <div>
+                            <code className="text-yellow-400 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800 font-mono font-bold">{"{{cpf_cliente}"}</code>
+                            <span className="text-gray-400 ml-2">CPF do cliente</span>
+                          </div>
+                          <div>
+                            <code className="text-yellow-400 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800 font-mono font-bold">{"{{data_passeio}"}</code>
+                            <span className="text-gray-400 ml-2">Data do passeio (DD/MM/AAAA)</span>
+                          </div>
+                          <div>
+                            <code className="text-yellow-400 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800 font-mono font-bold">{"{{lancha}"}</code>
+                            <span className="text-gray-400 ml-2">Nome da embarcação</span>
+                          </div>
+                          <div>
+                            <code className="text-yellow-400 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800 font-mono font-bold">{"{{roteiro}"}</code>
+                            <span className="text-gray-400 ml-2">Embarque → Destino</span>
+                          </div>
+                          <div>
+                            <code className="text-yellow-400 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800 font-mono font-bold">{"{{valor_total}"}</code>
+                            <span className="text-gray-400 ml-2">Preço total</span>
+                          </div>
+                          <div>
+                            <code className="text-yellow-400 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800 font-mono font-bold">{"{{valor_entrada}"}</code>
+                            <span className="text-gray-400 ml-2">Sinal de Entrada (50%)</span>
+                          </div>
+                          <div>
+                            <code className="text-yellow-400 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800 font-mono font-bold">{"{{valor_restante}"}</code>
+                            <span className="text-gray-400 ml-2">Valor restante a pagar</span>
+                          </div>
+                          <div>
+                            <code className="text-yellow-400 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800 font-mono font-bold">{"{{extras}"}</code>
+                            <span className="text-gray-400 ml-2">Status do Tapete Flutuante</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
             </div>
           )}
         </div>
@@ -890,6 +1023,10 @@ export default function FleetManagement() {
                         <div>
                          <label className="text-xs text-gray-500 uppercase font-bold">Nome do Barco</label>
                          <input type="text" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:border-yellow-500 focus:outline-none"/>
+                        </div>
+                        <div>
+                         <label className="text-xs text-gray-500 uppercase font-bold">URL do Catálogo Digital</label>
+                         <input type="url" value={formData.catalogo_url} onChange={e => setFormData({...formData, catalogo_url: e.target.value})} placeholder="https://..." className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:border-yellow-500 focus:outline-none"/>
                         </div>
 
                         <div className="grid grid-cols-2 gap-4">

@@ -145,10 +145,130 @@ async function sendFollowUp(conversationId: string, phone: string, text: string)
 /**
  * Starts the hourly cron job.
  */
+/**
+ * Queries yesterday's completed trips, updates their status to COMPLETED, and sends WhatsApp evaluations.
+ */
+export async function checkPostTrips(): Promise<void> {
+  console.log('[Scheduler] Running post-trip evaluation check...');
+
+  try {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yyyy = yesterday.getFullYear();
+    const mm = String(yesterday.getMonth() + 1).padStart(2, '0');
+    const dd = String(yesterday.getDate()).padStart(2, '0');
+    const yesterdayStr = `${yyyy}-${mm}-${dd}`;
+
+    // 1. Query reservations where status is CONFIRMED
+    const { data: reservations, error: resError } = await supabaseAdmin
+      .from('reservations')
+      .select('*, customers(*)')
+      .eq('status', 'CONFIRMED');
+
+    if (resError) throw resError;
+
+    const completedYesterday = (reservations || []).filter(res => {
+      if (!res.start_date) return false;
+      return res.start_date.substring(0, 10) === yesterdayStr;
+    });
+
+    if (completedYesterday.length === 0) {
+      console.log('[Scheduler] No completed trips found for yesterday.');
+      return;
+    }
+
+    // 2. Fetch review URLs from global_settings
+    const { data: settings } = await supabaseAdmin
+      .from('global_settings')
+      .select('key, value');
+
+    const settingsMap: Record<string, any> = {};
+    (settings || []).forEach(s => { settingsMap[s.key] = s.value; });
+
+    let googleReviewUrl = 'https://www.google.com';
+    let siteReviewUrl = 'https://lanchas-show.vercel.app/avaliacao';
+
+    const parseUrl = (val: any) => {
+      if (typeof val === 'string') {
+        try {
+          return JSON.parse(val);
+        } catch {
+          return val;
+        }
+      }
+      return val;
+    };
+
+    if (settingsMap['google_review_url']) {
+      googleReviewUrl = parseUrl(settingsMap['google_review_url']);
+    }
+    if (settingsMap['site_review_url']) {
+      siteReviewUrl = parseUrl(settingsMap['site_review_url']);
+    }
+
+    for (const res of completedYesterday) {
+      const phone = res.customers?.phone;
+      if (!phone) {
+        console.warn(`[Scheduler] Reservation ${res.id} has no customer phone, skipping.`);
+        continue;
+      }
+
+      console.log(`[Scheduler] Processing completed reservation ${res.id} for client phone ${phone}`);
+
+      // a. Update status to COMPLETED
+      const { error: updateError } = await supabaseAdmin
+        .from('reservations')
+        .update({ status: 'COMPLETED' })
+        .eq('id', res.id);
+
+      if (updateError) {
+        console.error(`[Scheduler] Error updating status to COMPLETED for reservation ${res.id}:`, updateError);
+        continue;
+      }
+
+      // b. Send WhatsApp message
+      const text = `Como foi o dia a bordo? ✨\nSeu feedback é muito importante pra gente!\n\n⭐ Avalie no Google:\n${googleReviewUrl}\n\n🛥️ Avalie o barco e o marinheiro:\n${siteReviewUrl}`;
+      await sendWhatsAppMessage(phone, text);
+
+      // c. Find active conversation to save in message history and update stage
+      const { data: conv } = await supabaseAdmin
+        .from('ia_conversations')
+        .select('id')
+        .eq('contact_phone', phone)
+        .eq('status', 'AI_CONTROL')
+        .maybeSingle();
+
+      if (conv) {
+        // Save in ia_messages
+        await supabaseAdmin
+          .from('ia_messages')
+          .insert({
+            conversation_id: conv.id,
+            sender: 'IA',
+            content: text
+          });
+
+        // Update stage to 'concluido'
+        await supabaseAdmin
+          .from('ia_conversations')
+          .update({ stage: 'concluido' })
+          .eq('id', conv.id);
+      }
+    }
+  } catch (error) {
+    console.error('[Scheduler] Error running post-trip evaluation scheduler:', error);
+  }
+}
+
+/**
+ * Starts the hourly cron job.
+ */
 export function startScheduler(): void {
   // '0 * * * *' = every hour at minute 0
   cron.schedule('0 * * * *', async () => {
     await checkFollowUps();
+    await checkPostTrips();
   });
-  console.log('[Scheduler] Hourly follow-up cron job initialized.');
+  console.log('[Scheduler] Hourly follow-up and post-trip evaluation cron job initialized.');
 }
+

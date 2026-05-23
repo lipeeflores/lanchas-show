@@ -187,3 +187,35 @@ export async function sendWhatsAppMessage(toPhone: string, text: string): Promis
     throw error;
   }
 }
+
+/**
+ * Sends presence status (e.g. composing/typing) to a recipient.
+ */
+export async function sendPresence(toPhone: string, presence: 'composing' | 'paused'): Promise<void> {
+  let recipient = toPhone;
+  if (!recipient.includes('@')) {
+    const sanitized = recipient.replace(/\D/g, '');
+    recipient = `${sanitized}@s.whatsapp.net`;
+  }
+
+  try {
+    const res = await fetch(`${apiUrl}/chat/sendPresence/${instanceName}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': apiKey
+      },
+      body: JSON.stringify({
+        number: recipient,
+        presence: presence
+      })
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.warn(`[Evolution] sendPresence failed for ${toPhone}: ${res.status} - ${errText}`);
+    }
+  } catch (error) {
+    console.error(`[Evolution] Error sending presence to ${toPhone}:`, error);
+  }
+}

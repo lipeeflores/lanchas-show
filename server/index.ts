@@ -5,6 +5,8 @@ import { handleWhatsAppWebhook } from './webhook';
 import { ensureInstanceCreated, getConnectionState, getConnectQrCode, sendWhatsAppMessage } from './evolution';
 import { startScheduler } from './scheduler';
 import { supabaseAdmin } from './supabase';
+import { handleAsaasWebhook } from './webhook_asaas';
+import { handleDocusealWebhook } from './webhook_docuseal';
 
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
@@ -13,6 +15,10 @@ const port = process.env.PORT || 3001;
 
 // Middleware
 app.use(express.json());
+
+// Webhooks
+app.post('/api/asaas/webhook', handleAsaasWebhook);
+app.post('/api/docuseal/webhook', handleDocusealWebhook);
 
 // Routes
 // 1. Webhook endpoint from Evolution API (using wildcard to capture event sub-paths)

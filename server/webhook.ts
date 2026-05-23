@@ -1,8 +1,17 @@
 import { Request, Response } from 'express';
 import { supabaseAdmin } from './supabase';
-import { sendWhatsAppMessage } from './evolution';
-import { getAiResponse } from './groq';
+import { sendWhatsAppMessage, sendPresence } from './evolution';
+import { getAiResponse } from './claude';
 import { messageQueue } from './queue';
+
+const evolutionApiUrl = process.env.EVOLUTION_API_URL || 'http://localhost:8080';
+const evolutionApiKey = process.env.EVOLUTION_API_KEY || '429643a637c6883135f28a8d193d1e6';
+const evolutionInstanceName = process.env.EVOLUTION_INSTANCE_NAME || 'lanchas_show';
+
+// Map to store debouncing timeouts per phone number
+const conversationTimeouts = new Map<string, NodeJS.Timeout>();
+
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
  * Extracts text content from various Evolution API message types.
@@ -25,13 +34,102 @@ function extractMessageText(messageObj: any): string {
 }
 
 /**
+ * Downloads base64 media data from Evolution API.
+ */
+async function getBase64Media(messageId: string): Promise<{ base64: string; mimetype: string } | null> {
+  try {
+    const res = await fetch(`${evolutionApiUrl}/chat/getBase64FromMediaMessage/${evolutionInstanceName}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': evolutionApiKey
+      },
+      body: JSON.stringify({
+        message: {
+          key: {
+            id: messageId
+          }
+        }
+      })
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.warn(`[Whisper] Evolution API getBase64FromMediaMessage failed: ${res.status} - ${errText}`);
+      return null;
+    }
+
+    const data = await res.json();
+    return {
+      base64: data.base64 || '',
+      mimetype: data.mimetype || 'audio/ogg'
+    };
+  } catch (error) {
+    console.error(`[Whisper] Error downloading media message:`, error);
+    return null;
+  }
+}
+
+/**
+ * Transcribes audio via OpenAI Whisper API.
+ */
+async function transcribeAudio(base64DataStr: string, mimetype: string): Promise<string> {
+  const openAiApiKey = process.env.OPENAI_API_KEY;
+  if (!openAiApiKey) {
+    console.warn('[Whisper] OpenAI API Key is missing. Cannot transcribe audio.');
+    return '[Áudio não transcrito - API Key ausente]';
+  }
+
+  const base64Data = base64DataStr.split(';base64,').pop() || base64DataStr;
+  const audioBuffer = Buffer.from(base64Data, 'base64');
+
+  const formData = new FormData();
+  const blob = new Blob([audioBuffer], { type: mimetype || 'audio/ogg' });
+  
+  let ext = 'ogg';
+  if (mimetype.includes('mp3')) ext = 'mp3';
+  else if (mimetype.includes('wav')) ext = 'wav';
+  else if (mimetype.includes('m4a')) ext = 'm4a';
+
+  formData.append('file', blob, `audio.${ext}`);
+  formData.append('model', 'whisper-1');
+  formData.append('language', 'pt');
+
+  const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${openAiApiKey}`
+    },
+    body: formData
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`OpenAI Whisper responded with ${res.status}: ${errText}`);
+  }
+
+  const data = await res.json();
+  return data.text || '';
+}
+
+/**
+ * Calculates typing animation duration based on character count.
+ */
+function calculateTypingDelay(text: string): number {
+  const length = text.length;
+  if (length <= 100) return 2000;
+  if (length <= 300) return 4000;
+  if (length <= 600) return 6000;
+  return 8000;
+}
+
+/**
  * Webhook handler for Evolution API.
  */
 export async function handleWhatsAppWebhook(req: Request, res: Response): Promise<void> {
   const body = req.body;
-
-  // Evolution API sends 'messages.upsert' or 'MESSAGES_UPSERT'
   const event = body.event || '';
+  
   if (!event.toLowerCase().includes('upsert')) {
     res.status(200).json({ status: 'ignored', reason: 'Not an upsert event' });
     return;
@@ -48,8 +146,28 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
   const phone = remoteJid.split('@')[0];
   const pushName = data.pushName || phone;
 
-  // Extract message text content
-  const textContent = extractMessageText(data.message);
+  // Handle incoming media: Audio message transcription via Whisper
+  let textContent = '';
+  const isAudio = data.message?.audioMessage || data.message?.pttMessage;
+
+  if (isAudio) {
+    console.log(`[Webhook] Audio message detected from ${phone}. Downloading for Whisper transcription...`);
+    try {
+      const mediaInfo = await getBase64Media(data.key.id);
+      if (mediaInfo?.base64) {
+        textContent = await transcribeAudio(mediaInfo.base64, mediaInfo.mimetype);
+        console.log(`[Webhook] Whisper transcription successful: "${textContent}"`);
+      } else {
+        textContent = '[Áudio não transcrito - falha no download]';
+      }
+    } catch (error) {
+      console.error(`[Webhook] Error in Whisper transcription:`, error);
+      textContent = '[Áudio não transcrito - erro na transcrição]';
+    }
+  } else {
+    textContent = extractMessageText(data.message);
+  }
+
   if (!textContent) {
     res.status(200).json({ status: 'ignored', reason: 'Empty text or unsupported message type' });
     return;
@@ -57,10 +175,61 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
 
   console.log(`[Webhook] Event: ${event} | Phone: ${phone} | fromMe: ${fromMe} | Msg: "${textContent.substring(0, 30)}..."`);
 
-  // Enqueue message processing to prevent concurrency issues per phone number
-  messageQueue.enqueue(phone, async () => {
+  if (fromMe) {
+    // Process outgoing messages (messages sent from our side)
+    messageQueue.enqueue(phone, async () => {
+      try {
+        let { data: conversation } = await supabaseAdmin
+          .from('ia_conversations')
+          .select('id')
+          .eq('contact_phone', phone)
+          .maybeSingle();
+
+        if (!conversation) {
+          const { data: newConv } = await supabaseAdmin
+            .from('ia_conversations')
+            .insert({
+              contact_name: pushName,
+              contact_phone: phone,
+              contact_type: 'CLIENT',
+              status: 'AI_CONTROL',
+              stage: 'novo',
+              subject: 'Atendimento WhatsApp'
+            })
+            .select('id')
+            .single();
+          conversation = newConv;
+        }
+
+        if (conversation) {
+          const { data: existing } = await supabaseAdmin
+            .from('ia_messages')
+            .select('id')
+            .eq('conversation_id', conversation.id)
+            .eq('content', textContent)
+            .limit(1);
+
+          if (existing && existing.length > 0) {
+            return;
+          }
+
+          await supabaseAdmin
+            .from('ia_messages')
+            .insert({
+              conversation_id: conversation.id,
+              sender: 'ADMIN',
+              content: textContent
+            });
+          console.log(`[Webhook] Outgoing message saved as ADMIN.`);
+        }
+      } catch (error) {
+        console.error(`[Webhook] Error saving outgoing message:`, error);
+      }
+    });
+  } else {
+    // Process incoming client messages (debounced and queued)
     try {
-      // 1. Get or create conversation in DB
+      // 1. Fetch or create conversation
       let { data: conversation, error: convError } = await supabaseAdmin
         .from('ia_conversations')
         .select('*')
@@ -70,7 +239,6 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
       if (convError) throw convError;
 
       if (!conversation) {
-        // Create new conversation
         const { data: newConv, error: createError } = await supabaseAdmin
           .from('ia_conversations')
           .insert({
@@ -86,88 +254,99 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
 
         if (createError) throw createError;
         conversation = newConv;
-        console.log(`[Webhook] Created new conversation for phone ${phone}.`);
       }
 
-      if (fromMe) {
-        // Message sent from our side (either by IA or manually by the Admin on their phone)
-        // Check if this message was already saved (e.g. by our own script)
-        const { data: existing, error: existError } = await supabaseAdmin
-          .from('ia_messages')
-          .select('id')
-          .eq('conversation_id', conversation.id)
-          .eq('content', textContent)
-          .limit(1);
+      // 2. Save client's message in the DB immediately so it updates the Admin UI
+      const { error: insertError } = await supabaseAdmin
+        .from('ia_messages')
+        .insert({
+          conversation_id: conversation.id,
+          sender: 'CLIENT',
+          content: textContent
+        });
 
-        if (existError) throw existError;
+      if (insertError) throw insertError;
+      console.log(`[Webhook] Incoming message saved as CLIENT immediately.`);
 
-        if (existing && existing.length > 0) {
-          // Already registered, skip
-          console.log(`[Webhook] Outgoing message already registered. Skipping.`);
-          return;
+      // 3. If under AI control, debounce the response trigger
+      if (conversation.status === 'AI_CONTROL') {
+        const existingTimeout = conversationTimeouts.get(phone);
+        if (existingTimeout) {
+          console.log(`[Webhook] Message from ${phone} received within 8s. Resetting debounce timer.`);
+          clearTimeout(existingTimeout);
         }
 
-        // Outgoing message not in DB -> Sent manually by admin via phone -> Save as ADMIN
-        const { error: insertError } = await supabaseAdmin
-          .from('ia_messages')
-          .insert({
-            conversation_id: conversation.id,
-            sender: 'ADMIN',
-            content: textContent
-          });
+        const timeout = setTimeout(() => {
+          conversationTimeouts.delete(phone);
 
-        if (insertError) throw insertError;
-        console.log(`[Webhook] Outgoing message saved as ADMIN (manual reply via phone).`);
+          // Enqueue the AI generation task in the sequential queue
+          messageQueue.enqueue(phone, async () => {
+            try {
+              // Reload conversation mode to check if it's still AI_CONTROL
+              const { data: currentConv } = await supabaseAdmin
+                .from('ia_conversations')
+                .select('status, id')
+                .eq('contact_phone', phone)
+                .single();
+
+              if (!currentConv || currentConv.status !== 'AI_CONTROL') {
+                console.log(`[Webhook] Conversation ${phone} is no longer in AI_CONTROL. Skipping AI response.`);
+                return;
+              }
+
+              // Fetch the last 20 messages for context (ordered chronologically)
+              const { data: history, error: historyError } = await supabaseAdmin
+                .from('ia_messages')
+                .select('sender, content')
+                .eq('conversation_id', currentConv.id)
+                .order('created_at', { ascending: false })
+                .limit(20);
+
+              if (historyError) throw historyError;
+
+              const chronologicalHistory = (history || []).reverse();
+
+              // Call Claude to formulate response
+              const aiResponseText = await getAiResponse(currentConv.id, chronologicalHistory);
+
+              if (!aiResponseText || !aiResponseText.trim()) return;
+
+              // Send "composing" presence status to WhatsApp
+              await sendPresence(phone, 'composing');
+
+              // Wait dynamic typing delay
+              const delayMs = calculateTypingDelay(aiResponseText);
+              console.log(`[Webhook] Simulating typing. Waiting ${delayMs}ms before sending message.`);
+              await delay(delayMs);
+
+              // Send message to WhatsApp via Evolution API
+              await sendWhatsAppMessage(phone, aiResponseText);
+
+              // Save AI response in DB
+              const { error: aiInsertError } = await supabaseAdmin
+                .from('ia_messages')
+                .insert({
+                  conversation_id: currentConv.id,
+                  sender: 'IA',
+                  content: aiResponseText
+                });
+
+              if (aiInsertError) throw aiInsertError;
+              console.log(`[Webhook] AI responded successfully and message saved.`);
+            } catch (error) {
+              console.error(`[Webhook] Error executing enqueued AI task for ${phone}:`, error);
+            }
+          });
+        }, 8000); // 8-second inactivity window
+
+        conversationTimeouts.set(phone, timeout);
       } else {
-        // Incoming message from the Client
-        // 1. Save client's message in the DB
-        const { error: insertError } = await supabaseAdmin
-          .from('ia_messages')
-          .insert({
-            conversation_id: conversation.id,
-            sender: 'CLIENT',
-            content: textContent
-          });
-
-        if (insertError) throw insertError;
-        console.log(`[Webhook] Incoming message saved as CLIENT.`);
-
-        // 2. Check conversation mode
-        if (conversation.status === 'AI_CONTROL') {
-          // Fetch complete history to feed Groq (ordered chronologically)
-          const { data: history, error: historyError } = await supabaseAdmin
-            .from('ia_messages')
-            .select('sender, content')
-            .eq('conversation_id', conversation.id)
-            .order('created_at', { ascending: true });
-
-          if (historyError) throw historyError;
-
-          // Call Groq to generate response
-          const aiResponseText = await getAiResponse(conversation.id, history || []);
-
-          // Send message to WhatsApp via Evolution API
-          await sendWhatsAppMessage(phone, aiResponseText);
-
-          // Save AI response in DB
-          const { error: aiInsertError } = await supabaseAdmin
-            .from('ia_messages')
-            .insert({
-              conversation_id: conversation.id,
-              sender: 'IA',
-              content: aiResponseText
-            });
-
-          if (aiInsertError) throw aiInsertError;
-          console.log(`[Webhook] AI responded successfully and message saved as IA.`);
-        } else {
-          console.log(`[Webhook] Chat in HUMAN_CONTROL mode. No AI response triggered.`);
-        }
+        console.log(`[Webhook] Chat in HUMAN_CONTROL mode. No AI response triggered.`);
       }
     } catch (error) {
-      console.error(`[Webhook] Error in enqueued task for phone ${phone}:`, error);
+      console.error(`[Webhook] Error handling client message:`, error);
     }
-  });
+  }
 
   // Acknowledge webhook immediately
   res.status(200).json({ status: 'received' });

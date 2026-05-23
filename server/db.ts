@@ -69,6 +69,10 @@ export async function getPricingTierForDate(dateStr: string): Promise<PricingTie
  * Checks boat availability and rates for a given date.
  * Guarantees that own boats (owner_type = 'OWN') are sorted first in the list.
  */
+/**
+ * Checks boat availability and rates for a given date.
+ * Guarantees that own boats (owner_type = 'OWN') are sorted first in the list.
+ */
 export async function checkBoatAvailability(dateStr: string) {
   try {
     const pricingTier = await getPricingTierForDate(dateStr);
@@ -90,10 +94,31 @@ export async function checkBoatAvailability(dateStr: string) {
       });
     }
 
-    // Fetch all available boats
+    // Check if own-fleet tapete is already reserved on this date (only 1 tapete for the entire own fleet)
+    let tapeteDisponivel = true;
+    const { data: activeResDetail } = await supabaseAdmin
+      .from('reservations')
+      .select('start_date, end_date, tapete_status, boats(owner_type)')
+      .not('status', 'in', '("CANCELLED","NO_SHOW")');
+
+    if (activeResDetail) {
+      const hasBookedTapete = activeResDetail.some((res: any) => {
+        const resStart = res.start_date ? res.start_date.substring(0, 10) : '';
+        const resEnd = res.end_date ? res.end_date.substring(0, 10) : '';
+        const isDateMatch = dateStr >= resStart && dateStr <= resEnd;
+        const isOwnFleet = res.boats && res.boats.owner_type === 'OWN';
+        const hasTapete = res.tapete_status === 'alugado' || res.tapete_status === 'cortesia';
+        return isDateMatch && isOwnFleet && hasTapete;
+      });
+      if (hasBookedTapete) {
+        tapeteDisponivel = false;
+      }
+    }
+
+    // Fetch all available boats with partner details
     const { data: boats, error: boatsError } = await supabaseAdmin
       .from('boats')
-      .select('*')
+      .select('*, partners(name, contact_phone)')
       .eq('status', 'AVAILABLE');
 
     if (boatsError || !boats) {
@@ -130,7 +155,10 @@ export async function checkBoatAvailability(dateStr: string) {
           normal_price: normalPrice,
           min_price: minPrice, // INTERNAL USE ONLY
           has_floating_mat: boat.has_floating_mat,
-          floating_mat_price: Number(boat.floating_mat_price) || 0
+          floating_mat_price: Number(boat.floating_mat_price) || 0,
+          catalogo_url: boat.catalogo_url || null,
+          partner_name: boat.partners?.name || null,
+          partner_phone: boat.partners?.contact_phone || null
         };
       });
 
@@ -144,6 +172,7 @@ export async function checkBoatAvailability(dateStr: string) {
     return {
       date: dateStr,
       pricing_tier: pricingTier,
+      tapete_disponivel: tapeteDisponivel,
       available_boats: availableBoats
     };
   } catch (error: any) {
@@ -187,5 +216,176 @@ export async function updateConversationTargetDate(conversationId: string, dateS
   } catch (error: any) {
     console.error(`[DB Helper] Error updating conversation target_date:`, error);
     return { error: error.message || 'Erro ao atualizar data de interesse.' };
+  }
+}
+
+/**
+ * Creates a pending reservation in the system.
+ */
+export async function createPendingReservation(data: {
+  phone: string;
+  name: string;
+  boat_id: string;
+  date: string; // YYYY-MM-DD
+  boarding_point: string;
+  destination: string;
+  passenger_count: number;
+  floating_mat_status: 'none' | 'paid' | 'courtesy';
+  total_price: number;
+}) {
+  try {
+    // 1. Resolve or create customer
+    let { data: customer, error: custError } = await supabaseAdmin
+      .from('customers')
+      .select('id')
+      .eq('phone', data.phone)
+      .maybeSingle();
+
+    if (custError) throw custError;
+
+    if (!customer) {
+      const { data: newCust, error: createCustError } = await supabaseAdmin
+        .from('customers')
+        .insert({
+          full_name: data.name,
+          phone: data.phone
+        })
+        .select('id')
+        .single();
+
+      if (createCustError) throw createCustError;
+      customer = newCust;
+    }
+
+    // Map floating_mat_status to tapete_status
+    let tapeteStatus = 'disponivel';
+    if (data.floating_mat_status === 'paid') {
+      tapeteStatus = 'alugado';
+    } else if (data.floating_mat_status === 'courtesy') {
+      tapeteStatus = 'cortesia';
+    }
+
+    // Calculate dates
+    const startDate = `${data.date}T10:00:00-03:00`;
+    const endDate = `${data.date}T18:00:00-03:00`;
+
+    // 2. Insert reservation
+    const { data: reservation, error: resError } = await supabaseAdmin
+      .from('reservations')
+      .insert({
+        boat_id: data.boat_id,
+        customer_id: customer.id,
+        start_date: startDate,
+        end_date: endDate,
+        status: 'PENDING',
+        total_price: data.total_price,
+        total_reservation_value: data.total_price,
+        passenger_count: data.passenger_count,
+        boarding_point: data.boarding_point,
+        destination: data.destination,
+        floating_mat_status: data.floating_mat_status,
+        tapete_status: tapeteStatus
+      })
+      .select('*, boats(name)')
+      .single();
+
+    if (resError) throw resError;
+
+    console.log(`[DB Helper] Created pending reservation for client ${data.name} on boat ${(reservation as any).boats?.name}`);
+    return { success: true, reservation };
+  } catch (error: any) {
+    console.error(`[DB Helper] Error creating pending reservation:`, error);
+    return { error: error.message || 'Erro ao criar reserva pendente.' };
+  }
+}
+
+/**
+ * Updates customer CPF and triggers contract generation and DocuSeal workflow.
+ */
+export async function updateCustomerCPF(conversationId: string, cpfStr: string) {
+  try {
+    // 1. Get conversation to retrieve customer_id
+    const { data: conv, error: convError } = await supabaseAdmin
+      .from('ia_conversations')
+      .select('*')
+      .eq('id', conversationId)
+      .single();
+
+    if (convError || !conv) {
+      throw new Error(convError?.message || 'Conversa não encontrada');
+    }
+
+    let customerId = conv.customer_id;
+    const phone = conv.contact_phone;
+
+    // 2. If no customer_id on conversation, find/create customer by phone
+    if (!customerId) {
+      let { data: customer } = await supabaseAdmin
+        .from('customers')
+        .select('id')
+        .eq('phone', phone)
+        .maybeSingle();
+
+      if (!customer) {
+        const { data: newCust, error: createCustError } = await supabaseAdmin
+          .from('customers')
+          .insert({
+            full_name: conv.contact_name,
+            phone: phone
+          })
+          .select('id')
+          .single();
+
+        if (createCustError) throw createCustError;
+        customer = newCust;
+      }
+      
+      customerId = customer.id;
+
+      // Update conversation with customer_id
+      await supabaseAdmin
+        .from('ia_conversations')
+        .update({ customer_id: customerId })
+        .eq('id', conversationId);
+    }
+
+    // 3. Update customer's CPF
+    const { error: updateCustError } = await supabaseAdmin
+      .from('customers')
+      .update({ document_cpf: cpfStr })
+      .eq('id', customerId);
+
+    if (updateCustError) throw updateCustError;
+    console.log(`[DB Helper] Customer ${customerId} CPF updated to: ${cpfStr}`);
+
+    // 4. Find the latest PENDING or PENDING_CONTRACT reservation for this customer
+    // to trigger the contract generation
+    const { data: reservation, error: resError } = await supabaseAdmin
+      .from('reservations')
+      .select('id, status')
+      .eq('customer_id', customerId)
+      .in('status', ['PENDING', 'PENDING_CONTRACT'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (resError) throw resError;
+
+    if (reservation) {
+      console.log(`[DB Helper] Triggering contract generation for reservation: ${reservation.id}`);
+      // Import dynamically to avoid circular dependency
+      const { generateAndSendContract } = await import('./contract');
+      // Run asynchronously so we don't block the API response
+      generateAndSendContract(reservation.id).catch(err => {
+        console.error(`[DB Helper] Error in generateAndSendContract background worker:`, err);
+      });
+    } else {
+      console.warn(`[DB Helper] No pending reservation found for customer ${customerId} to generate contract.`);
+    }
+
+    return { success: true, cpf: cpfStr };
+  } catch (error: any) {
+    console.error(`[DB Helper] Error in updateCustomerCPF:`, error);
+    return { error: error.message || 'Erro ao atualizar CPF e gerar contrato.' };
   }
 }
