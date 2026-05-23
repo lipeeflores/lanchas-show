@@ -61,17 +61,34 @@ export async function checkFollowUps(): Promise<void> {
         (lastMsg.sender === 'IA' || lastMsg.sender === 'ADMIN') &&
         msSinceLastMsg >= THIRTY_MINUTES
       ) {
+        // Define variations of follow-up messages to avoid looking like a robot
+        const SINAL_SOLICITADO_FOLLOW_UPS = [
+          'Olá! O bloqueio de segurança da data expira em breve e precisarei liberar a lancha. Conseguiram decidir? 🙏',
+          'Oi! Passando para lembrar que a data ainda está bloqueada para você, mas por pouco tempo. Conseguiram alinhar com o pessoal? 😊',
+          'Olá! Conseguimos segurar a lancha até agora para você, mas há outros clientes interessados. Conseguimos fechar? 🛥️',
+          'Oi! Tudo bem? Conseguiu ver o pix do sinal? Quero muito garantir essa navegação para vocês! ⚓'
+        ];
+
+        const GENERAL_FOLLOW_UPS = [
+          'Oi! Tudo bem? Passando para saber se ficou alguma dúvida sobre as lanchas ou se gostaria de ajustar algum detalhe do passeio! 🛥️',
+          'Olá! 😊 Ficou alguma dúvida sobre as opções de lanchas que conversamos? Se quiser, posso ajustar o roteiro ou o número de pessoas!',
+          'Oi! Passando para saber se o pessoal gostou da lancha! Tem alguma dúvida que eu possa te ajudar a esclarecer para fecharmos? 🚤',
+          'Olá! Como estão os planos para o passeio? Se precisar de mais informações sobre o embarque ou os barcos, estou por aqui! ⚓'
+        ];
+
         const lastMsgIsFollowUp = 
-          lastMsg.content.includes('ficou alguma dúvida sobre as lanchas') ||
-          lastMsg.content.includes('bloqueio de segurança da data expira') ||
+          SINAL_SOLICITADO_FOLLOW_UPS.some(text => lastMsg.content.includes(text)) ||
+          GENERAL_FOLLOW_UPS.some(text => lastMsg.content.includes(text)) ||
           lastMsg.content.includes('reserva da lancha é garantida mediante o sinal');
 
         if (!lastMsgIsFollowUp) {
           let followUpText = '';
           if (conv.stage === 'sinal_solicitado') {
-            followUpText = 'Olá! O bloqueio de segurança da data expira em breve e precisarei liberar a lancha. Conseguiram decidir? 🙏';
+            const idx = Math.floor(Math.random() * SINAL_SOLICITADO_FOLLOW_UPS.length);
+            followUpText = SINAL_SOLICITADO_FOLLOW_UPS[idx];
           } else {
-            followUpText = 'Oi! Tudo bem? Passando para saber se ficou alguma dúvida sobre as lanchas ou se gostaria de ajustar algum detalhe do passeio! 🛥️';
+            const idx = Math.floor(Math.random() * GENERAL_FOLLOW_UPS.length);
+            followUpText = GENERAL_FOLLOW_UPS[idx];
           }
           await sendFollowUp(conv.id, conv.contact_phone, followUpText);
           continue;
