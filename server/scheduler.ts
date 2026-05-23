@@ -53,6 +53,31 @@ export async function checkFollowUps(): Promise<void> {
       const now = Date.now();
       const msSinceLastMsg = now - new Date(lastMsg.created_at).getTime();
 
+      const THIRTY_MINUTES = 30 * 60 * 1000;
+
+      // 1. General 30-minute follow-up if client went silent during negotiation
+      if (
+        (conv.stage === 'novo' || conv.stage === 'cotado' || conv.stage === 'sinal_solicitado') &&
+        (lastMsg.sender === 'IA' || lastMsg.sender === 'ADMIN') &&
+        msSinceLastMsg >= THIRTY_MINUTES
+      ) {
+        const lastMsgIsFollowUp = 
+          lastMsg.content.includes('ficou alguma dúvida sobre as lanchas') ||
+          lastMsg.content.includes('bloqueio de segurança da data expira') ||
+          lastMsg.content.includes('reserva da lancha é garantida mediante o sinal');
+
+        if (!lastMsgIsFollowUp) {
+          let followUpText = '';
+          if (conv.stage === 'sinal_solicitado') {
+            followUpText = 'Olá! O bloqueio de segurança da data expira em breve e precisarei liberar a lancha. Conseguiram decidir? 🙏';
+          } else {
+            followUpText = 'Oi! Tudo bem? Passando para saber se ficou alguma dúvida sobre as lanchas ou se gostaria de ajustar algum detalhe do passeio! 🛥️';
+          }
+          await sendFollowUp(conv.id, conv.contact_phone, followUpText);
+          continue;
+        }
+      }
+
       // Check stages and send appropriate follow-ups
       if (conv.stage === 'cotado') {
         // Rule: last message > 24h ago
@@ -319,15 +344,15 @@ export async function checkSameDay9AmFollowUps(): Promise<void> {
 }
 
 /**
- * Starts the hourly cron job.
+ * Starts the cron agendador (runs every 15 minutes).
  */
 export function startScheduler(): void {
-  // '0 * * * *' = every hour at minute 0
-  cron.schedule('0 * * * *', async () => {
+  // '*/15 * * * *' = every 15 minutes
+  cron.schedule('*/15 * * * *', async () => {
     await checkFollowUps();
     await checkSameDay9AmFollowUps();
     await checkPostTrips();
   });
-  console.log('[Scheduler] Hourly follow-up and post-trip evaluation cron job initialized.');
+  console.log('[Scheduler] 15-minute follow-up and post-trip evaluation cron job initialized.');
 }
 
