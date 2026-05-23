@@ -23,11 +23,17 @@ function extractMessageText(messageObj: any): string {
   if (messageObj.conversation) return messageObj.conversation;
   if (messageObj.extendedTextMessage?.text) return messageObj.extendedTextMessage.text;
   
-  // Non-text message indicators
-  if (messageObj.imageMessage) return '[Foto]';
-  if (messageObj.documentMessage) return '[Documento]';
+  // Non-text message indicators with potential captions
+  if (messageObj.imageMessage) {
+    return messageObj.imageMessage.caption ? `[Foto] ${messageObj.imageMessage.caption}` : '[Foto]';
+  }
+  if (messageObj.documentMessage) {
+    return messageObj.documentMessage.caption ? `[Documento] ${messageObj.documentMessage.caption}` : '[Documento]';
+  }
   if (messageObj.audioMessage) return '[Áudio]';
-  if (messageObj.videoMessage) return '[Vídeo]';
+  if (messageObj.videoMessage) {
+    return messageObj.videoMessage.caption ? `[Vídeo] ${messageObj.videoMessage.caption}` : '[Vídeo]';
+  }
   if (messageObj.stickerMessage) return '[Figurinha]';
   
   return '';
@@ -276,6 +282,29 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
           }
 
           if (groupConv) {
+            // Extrai a mídia (foto/vídeo) se estiver presente na mensagem atual ou na mensagem citada
+            let mediaBase64: string | undefined;
+            let mediaMimetype: string | undefined;
+
+            const isMedia = data.message?.imageMessage || data.message?.videoMessage || data.message?.documentMessage || data.message?.audioMessage;
+            const quotedMessage = data.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+            const quotedMessageId = data.message?.extendedTextMessage?.contextInfo?.stanzaId;
+            const isQuotedMedia = quotedMessage?.imageMessage || quotedMessage?.videoMessage || quotedMessage?.documentMessage || quotedMessage?.audioMessage;
+
+            if (isMedia) {
+              const mediaInfo = await getBase64Media(data.key.id);
+              if (mediaInfo) {
+                mediaBase64 = mediaInfo.base64;
+                mediaMimetype = mediaInfo.mimetype;
+              }
+            } else if (isQuotedMedia && quotedMessageId) {
+              const mediaInfo = await getBase64Media(quotedMessageId);
+              if (mediaInfo) {
+                mediaBase64 = mediaInfo.base64;
+                mediaMimetype = mediaInfo.mimetype;
+              }
+            }
+
             // Save the owner's message in the DB
             await supabaseAdmin
               .from('ia_messages')
@@ -296,7 +325,7 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
 
             // Call Claude using the new getOwnersGroupResponse function
             const { getOwnersGroupResponse } = await import('./claude');
-            const aiResponseText = await getOwnersGroupResponse(chronologicalGroupHistory);
+            const aiResponseText = await getOwnersGroupResponse(chronologicalGroupHistory, mediaBase64, mediaMimetype);
 
             if (aiResponseText && aiResponseText.trim()) {
               // Send response to the owners' group

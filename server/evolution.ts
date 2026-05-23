@@ -189,6 +189,59 @@ export async function sendWhatsAppMessage(toPhone: string, text: string): Promis
 }
 
 /**
+ * Sends a media message (image, video, document, audio) to a recipient.
+ */
+export async function sendWhatsAppMedia(toPhone: string, base64Data: string, mimetype: string, caption?: string): Promise<any> {
+  let recipient = toPhone;
+  if (!recipient.includes('@')) {
+    const sanitized = recipient.replace(/\D/g, '');
+    recipient = `${sanitized}@s.whatsapp.net`;
+  }
+
+  let mediatype = 'document';
+  if (mimetype.startsWith('image/')) mediatype = 'image';
+  else if (mimetype.startsWith('video/')) mediatype = 'video';
+  else if (mimetype.startsWith('audio/')) mediatype = 'audio';
+
+  let cleanBase64 = base64Data;
+  if (cleanBase64.includes(';base64,')) {
+    cleanBase64 = cleanBase64.split(';base64,')[1];
+  }
+
+  const extension = mimetype.split('/')[1]?.split(';')[0] || 'bin';
+  const fileName = `media_${Date.now()}.${extension}`;
+
+  try {
+    const res = await fetch(`${apiUrl}/message/sendMedia/${instanceName}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': apiKey
+      },
+      body: JSON.stringify({
+        number: recipient,
+        mediaMessage: {
+          mediatype: mediatype,
+          media: cleanBase64,
+          fileName: fileName,
+          caption: caption || ''
+        }
+      })
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Evolution API sendMedia responded with status ${res.status}: ${errText}`);
+    }
+
+    return await res.json();
+  } catch (error) {
+    console.error(`[Evolution] Error sending media to ${toPhone}:`, error);
+    throw error;
+  }
+}
+
+/**
  * Sends presence status (e.g. composing/typing) to a recipient.
  */
 export async function sendPresence(toPhone: string, presence: 'composing' | 'paused'): Promise<void> {

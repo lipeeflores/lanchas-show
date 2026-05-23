@@ -480,30 +480,51 @@ export async function updateCustomerCPF(conversationId: string, cpfStr: string) 
   }
 }
 
-/**
- * Sends a promotional broadcast message to all active AI-controlled conversations.
- */
-export async function broadcastPromotion(customMessage: string) {
+export async function broadcastPromotion(customMessage: string, mediaBase64?: string, mediaMimetype?: string) {
   try {
-    // 1. Fetch all active AI_CONTROL conversations in negotiation stages
+    const fifteenDaysAgo = new Date();
+    fifteenDaysAgo.setDate(fifteenDaysAgo.getDate() - 15);
+    const fifteenDaysAgoStr = fifteenDaysAgo.toISOString();
+
+    // 1. Fetch recent conversation IDs from message activity in the last 15 days
+    const { data: recentMsgs, error: msgError } = await supabaseAdmin
+      .from('ia_messages')
+      .select('conversation_id')
+      .gte('created_at', fifteenDaysAgoStr);
+
+    if (msgError) throw msgError;
+
+    const recentConvIds = Array.from(new Set((recentMsgs || []).map(m => m.conversation_id).filter(Boolean)));
+
+    if (recentConvIds.length === 0) {
+      return { success: true, count: 0 };
+    }
+
+    // 2. Fetch all active AI_CONTROL conversations in negotiation stages that match those IDs
     const { data: conversations, error: convError } = await supabaseAdmin
       .from('ia_conversations')
       .select('id, contact_phone')
       .eq('status', 'AI_CONTROL')
-      .in('stage', ['novo', 'cotado', 'sinal_solicitado']);
+      .in('stage', ['novo', 'cotado', 'sinal_solicitado'])
+      .in('id', recentConvIds);
 
     if (convError) throw convError;
     if (!conversations || conversations.length === 0) {
       return { success: true, count: 0 };
     }
 
-    const { sendWhatsAppMessage } = await import('./evolution');
+    const { sendWhatsAppMessage, sendWhatsAppMedia } = await import('./evolution');
 
     let count = 0;
     for (const conv of conversations) {
       try {
-        // Send message via WhatsApp
-        await sendWhatsAppMessage(conv.contact_phone, customMessage);
+        if (mediaBase64 && mediaMimetype) {
+          // Send media with the customMessage as caption
+          await sendWhatsAppMedia(conv.contact_phone, mediaBase64, mediaMimetype, customMessage);
+        } else {
+          // Send text message only
+          await sendWhatsAppMessage(conv.contact_phone, customMessage);
+        }
 
         // Save message in ia_messages
         await supabaseAdmin
@@ -511,7 +532,7 @@ export async function broadcastPromotion(customMessage: string) {
           .insert({
             conversation_id: conv.id,
             sender: 'IA',
-            content: customMessage
+            content: mediaBase64 && mediaMimetype ? `[Mídia] ${customMessage}` : customMessage
           });
 
         count++;
