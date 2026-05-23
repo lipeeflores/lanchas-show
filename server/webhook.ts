@@ -116,11 +116,10 @@ async function transcribeAudio(base64DataStr: string, mimetype: string): Promise
  * Calculates typing animation duration based on character count.
  */
 function calculateTypingDelay(text: string): number {
-  const length = text.length;
-  if (length <= 100) return 2000;
-  if (length <= 300) return 4000;
-  if (length <= 600) return 6000;
-  return 8000;
+  // Base 1 second plus 30ms per character to simulate realistic typing
+  const delayMs = 1000 + (text.length * 30);
+  // Cap typing delay between 2 seconds and 9 seconds
+  return Math.min(Math.max(delayMs, 2000), 9000);
 }
 
 /**
@@ -459,6 +458,9 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
 
               const chronologicalHistory = (history || []).reverse();
 
+              // Send "composing" presence status to WhatsApp immediately when beginning generation
+              await sendPresence(phone, 'composing');
+
               // Call Claude to formulate response
               const aiResponseText = await getAiResponse(
                 currentConv.id,
@@ -467,9 +469,12 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
                 currentConv.contact_phone || phone || ''
               );
 
-              if (!aiResponseText || !aiResponseText.trim()) return;
+              if (!aiResponseText || !aiResponseText.trim()) {
+                await sendPresence(phone, 'paused');
+                return;
+              }
 
-              // Send "composing" presence status to WhatsApp
+              // Send "composing" presence status again to ensure it remains active during the typing delay
               await sendPresence(phone, 'composing');
 
               // Wait dynamic typing delay

@@ -4,7 +4,7 @@ import { motion } from 'motion/react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 
-const WHATSAPP_NUMBER = '5547999999999'; // Placeholder — trocar pelo número real
+const WHATSAPP_NUMBER = '5547996827545'; // Bot number
 
 const Navbar = () => {
   const [isScrolled, setIsScrolled] = useState(false);
@@ -910,7 +910,7 @@ const Footer = () => {
               <li>Porto Belo - SC</li>
               <li>Caixa d'Aço</li>
               <li>contato@lanchasshow.com.br</li>
-              <li>+55 (47) 99999-9999</li>
+              <li>+55 (47) 99682-7545</li>
             </ul>
           </div>
         </motion.div>

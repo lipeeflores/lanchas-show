@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import { Anchor, Users, Ship, Shield, Waves, MessageCircle, ChevronLeft, ChevronRight, X, ArrowLeft } from 'lucide-react';
 import { motion } from 'motion/react';
 
-const WHATSAPP_NUMBER = '5547999999999';
+const WHATSAPP_NUMBER = '5547996827545';
 
 export default function BoatDetails() {
   const { id } = useParams();
