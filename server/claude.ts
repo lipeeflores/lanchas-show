@@ -398,6 +398,24 @@ export async function getAiResponse(
   conversationId: string, 
   history: { sender: string; content: string }[]
 ): Promise<string> {
+  try {
+    const res = await getClaudeResponse(conversationId, history);
+    return res;
+  } catch (error: any) {
+    console.warn(`[Claude] Claude API failed (${error.message || error}), falling back to OpenAI gpt-4o...`);
+    try {
+      return await getOpenAiResponse(conversationId, history);
+    } catch (openAiError: any) {
+      console.error('[Claude Fallback] OpenAI fallback also failed:', openAiError.message || openAiError);
+      throw error;
+    }
+  }
+}
+
+async function getClaudeResponse(
+  conversationId: string, 
+  history: { sender: string; content: string }[]
+): Promise<string> {
   
   // 1. Map history to Anthropic messages format
   const messages: ChatMessage[] = [];
@@ -490,4 +508,241 @@ export async function getAiResponse(
   }
 
   throw new Error('Claude exceeded maximum tool call recursion depth.');
+}
+
+
+const OPENAI_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'check_availability',
+      description: 'Consulta a disponibilidade, preços e catálogo das lanchas para uma data específica. Retorna uma lista ordenada, priorizando a frota própria no topo.',
+      parameters: {
+        type: 'object',
+        properties: {
+          date: {
+            type: 'string',
+            description: 'A data do passeio no formato YYYY-MM-DD (ex: 2026-12-25).'
+          }
+        },
+        required: ['date']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_stage',
+      description: 'Atualiza o estágio do lead/conversa na negociação conforme o fluxo avança.',
+      parameters: {
+        type: 'object',
+        properties: {
+          stage: {
+            type: 'string',
+            enum: ['novo', 'cotado', 'sinal_solicitado', 'pix_enviado', 'reservado', 'concluido', 'humano'],
+            description: 'O novo estágio da conversa.'
+          }
+        },
+        required: ['stage']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_target_date',
+      description: 'Registra a data em que o cliente tem interesse em realizar o passeio de lancha.',
+      parameters: {
+        type: 'object',
+        properties: {
+          date: {
+            type: 'string',
+            description: 'A data do passeio no formato YYYY-MM-DD.'
+          }
+        },
+        required: ['date']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_pending_reservation',
+      description: 'Cria uma reserva com status PENDING no sistema após o fechamento dos detalhes com o cliente.',
+      parameters: {
+        type: 'object',
+        properties: {
+          phone: {
+            type: 'string',
+            description: 'O telefone do cliente (apenas números com DDI, ex: 554799999999).'
+          },
+          name: {
+            type: 'string',
+            description: 'O nome completo do cliente.'
+          },
+          boat_id: {
+            type: 'string',
+            description: 'O UUID da lancha escolhida.'
+          },
+          date: {
+            type: 'string',
+            description: 'A data do passeio no formato YYYY-MM-DD.'
+          },
+          boarding_point: {
+            type: 'string',
+            description: 'O ponto de embarque acordado.'
+          },
+          destination: {
+            type: 'string',
+            description: 'O destino principal do passeio.'
+          },
+          passenger_count: {
+            type: 'number',
+            description: 'O número total de passageiros.'
+          },
+          floating_mat_status: {
+            type: 'string',
+            enum: ['none', 'paid', 'courtesy'],
+            description: 'O status do tapete flutuante (none se não contratado, paid se pago R$300, courtesy se cortesia).'
+          },
+          total_price: {
+            type: 'number',
+            description: 'O valor total acordado para a diária (incluindo extras se houver).'
+          }
+        },
+        required: ['phone', 'name', 'boat_id', 'date', 'boarding_point', 'destination', 'passenger_count', 'floating_mat_status', 'total_price']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_customer_cpf',
+      description: 'Atualiza o CPF do cliente no banco de dados e dispara automaticamente a geração de contrato e assinatura DocuSeal.',
+      parameters: {
+        type: 'object',
+        properties: {
+          cpf: {
+            type: 'string',
+            description: 'O número do CPF do cliente (com ou sem pontuação).'
+          }
+        },
+        required: ['cpf']
+      }
+    }
+  }
+];
+
+export async function getOpenAiResponse(
+  conversationId: string,
+  history: { sender: string; content: string }[]
+): Promise<string> {
+  const openAiApiKey = process.env.OPENAI_API_KEY;
+  if (!openAiApiKey) {
+    throw new Error('OPENAI_API_KEY is missing');
+  }
+
+  // 1. Build messages array
+  const messages: any[] = [
+    { role: 'system', content: ISABELLE_SYSTEM_PROMPT }
+  ];
+
+  history.forEach(msg => {
+    if (msg.sender === 'CLIENT') {
+      messages.push({ role: 'user', content: msg.content });
+    } else if (msg.sender === 'IA' || msg.sender === 'ADMIN') {
+      messages.push({ role: 'assistant', content: msg.content });
+    }
+  });
+
+  if (messages.length === 1) {
+    messages.push({ role: 'user', content: 'Olá' });
+  }
+
+  let depth = 0;
+  const maxDepth = 5;
+
+  while (depth < maxDepth) {
+    depth++;
+    console.log(`[OpenAI Fallback] Calling chat completions loop. Depth: ${depth}`);
+
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${openAiApiKey}`
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: messages,
+        tools: OPENAI_TOOLS,
+        tool_choice: 'auto',
+        temperature: 0.3
+      })
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`OpenAI API responded with ${res.status}: ${errText}`);
+    }
+
+    const data = await res.json();
+    const assistantMessage = data.choices[0].message;
+
+    // Add assistant message to the thread
+    messages.push(assistantMessage);
+
+    const toolCalls = assistantMessage.tool_calls;
+
+    if (toolCalls && toolCalls.length > 0) {
+      for (const toolCall of toolCalls) {
+        const toolName = toolCall.function.name;
+        const toolArgs = JSON.parse(toolCall.function.arguments || '{}');
+        const toolCallId = toolCall.id;
+
+        console.log(`[OpenAI Fallback] LLM called tool: ${toolName} with args:`, toolArgs);
+        let resultString = '';
+
+        try {
+          if (toolName === 'check_availability') {
+            const availability = await checkBoatAvailability(toolArgs.date);
+            resultString = JSON.stringify(availability);
+          } else if (toolName === 'update_stage') {
+            const updateResult = await updateConversationStage(conversationId, toolArgs.stage);
+            resultString = JSON.stringify(updateResult);
+          } else if (toolName === 'update_target_date') {
+            const dateResult = await updateConversationTargetDate(conversationId, toolArgs.date);
+            resultString = JSON.stringify(dateResult);
+          } else if (toolName === 'create_pending_reservation') {
+            const resResult = await createPendingReservation(toolArgs);
+            resultString = JSON.stringify(resResult);
+          } else if (toolName === 'update_customer_cpf') {
+            const cpfResult = await updateCustomerCPF(conversationId, toolArgs.cpf);
+            resultString = JSON.stringify(cpfResult);
+          } else {
+            resultString = JSON.stringify({ error: `Tool ${toolName} not found` });
+          }
+        } catch (error) {
+          console.error(`[OpenAI Fallback] Error executing tool ${toolName}:`, error);
+          resultString = JSON.stringify({ error: error.message || 'Erro de execução da ferramenta.' });
+        }
+
+        // Add tool result to thread
+        messages.push({
+          role: 'tool',
+          tool_call_id: toolCallId,
+          name: toolName,
+          content: resultString
+        });
+      }
+
+      // Continue the loop to let the LLM see tool results and respond
+      continue;
+    }
+
+    // No tool calls, return text response
+    return assistantMessage.content || '';
+  }
+
+  throw new Error('OpenAI exceeded maximum tool call recursion depth.');
 }
