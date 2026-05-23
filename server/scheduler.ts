@@ -230,18 +230,28 @@ async function sendFollowUp(conversationId: string, phone: string, text: string)
 /**
  * Queries yesterday's completed trips (status COMPLETED), and sends WhatsApp evaluations if not already sent.
  */
+/**
+ * Queries completed trips (status COMPLETED) from today and yesterday, and sends WhatsApp evaluations at 19:00 (or later depending on extra hours).
+ */
 export async function checkPostTrips(): Promise<void> {
   console.log('[Scheduler] Running post-trip evaluation check...');
 
   try {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yyyy = yesterday.getFullYear();
-    const mm = String(yesterday.getMonth() + 1).padStart(2, '0');
-    const dd = String(yesterday.getDate()).padStart(2, '0');
-    const yesterdayStr = `${yyyy}-${mm}-${dd}`;
+    const now = new Date();
+    const localStr = now.toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' }); // "YYYY-MM-DD HH:MM:SS"
+    const todayStr = localStr.substring(0, 10);
+    const currentHour = Number(localStr.substring(11, 13));
 
-    // 1. Query reservations from yesterday where status is COMPLETED
+    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const yesterdayStr = yesterday.toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' }).substring(0, 10);
+
+    // Quiet Hours Policy: Defer automated evaluations from 22:00 to 08:00
+    if (currentHour >= 22 || currentHour < 8) {
+      console.log(`[Scheduler] Quiet hours active (${currentHour}h). Deferring post-trip evaluations.`);
+      return;
+    }
+
+    // 1. Query reservations where status is COMPLETED
     const { data: reservations, error: resError } = await supabaseAdmin
       .from('reservations')
       .select('*, customers(*)')
@@ -249,13 +259,15 @@ export async function checkPostTrips(): Promise<void> {
 
     if (resError) throw resError;
 
-    const completedYesterday = (reservations || []).filter(res => {
+    // Filter for trips that happened today or yesterday
+    const completedTrips = (reservations || []).filter(res => {
       if (!res.start_date) return false;
-      return res.start_date.substring(0, 10) === yesterdayStr;
+      const tripDate = new Date(res.start_date).toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' }).substring(0, 10);
+      return tripDate === todayStr || tripDate === yesterdayStr;
     });
 
-    if (completedYesterday.length === 0) {
-      console.log('[Scheduler] No completed trips found for yesterday.');
+    if (completedTrips.length === 0) {
+      console.log('[Scheduler] No completed trips found for today or yesterday.');
       return;
     }
 
@@ -288,7 +300,19 @@ export async function checkPostTrips(): Promise<void> {
       siteReviewUrl = parseUrl(settingsMap['site_review_url']);
     }
 
-    for (const res of completedYesterday) {
+    for (const res of completedTrips) {
+      const tripDate = new Date(res.start_date).toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' }).substring(0, 10);
+      
+      // If the trip is today, we check if it is already time to send (19h + extra hours)
+      if (tripDate === todayStr) {
+        const extraHours = Number(res.extra_hours_qty || 0);
+        const targetHour = 19 + extraHours;
+        if (currentHour < targetHour) {
+          console.log(`[Scheduler] Trip for reservation ${res.id} is scheduled for today but end-hour buffer has not passed yet (target: ${targetHour}h, current: ${currentHour}h).`);
+          continue;
+        }
+      }
+
       const phone = res.customers?.phone;
       if (!phone) {
         console.warn(`[Scheduler] Reservation ${res.id} has no customer phone, skipping.`);
@@ -305,7 +329,7 @@ export async function checkPostTrips(): Promise<void> {
         .maybeSingle();
 
       if (conv) {
-        // Check if we already sent an evaluation message today/yesterday to prevent duplicates
+        // Check if we already sent an evaluation message in the last 2 days to prevent duplicates
         const { data: alreadySentMsg } = await supabaseAdmin
           .from('ia_messages')
           .select('id')
