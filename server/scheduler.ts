@@ -228,7 +228,7 @@ async function sendFollowUp(conversationId: string, phone: string, text: string)
  * Starts the hourly cron job.
  */
 /**
- * Queries yesterday's completed trips, updates their status to COMPLETED, and sends WhatsApp evaluations.
+ * Queries yesterday's completed trips (status COMPLETED), and sends WhatsApp evaluations if not already sent.
  */
 export async function checkPostTrips(): Promise<void> {
   console.log('[Scheduler] Running post-trip evaluation check...');
@@ -241,11 +241,11 @@ export async function checkPostTrips(): Promise<void> {
     const dd = String(yesterday.getDate()).padStart(2, '0');
     const yesterdayStr = `${yyyy}-${mm}-${dd}`;
 
-    // 1. Query reservations where status is CONFIRMED
+    // 1. Query reservations from yesterday where status is COMPLETED
     const { data: reservations, error: resError } = await supabaseAdmin
       .from('reservations')
       .select('*, customers(*)')
-      .eq('status', 'CONFIRMED');
+      .eq('status', 'COMPLETED');
 
     if (resError) throw resError;
 
@@ -295,33 +295,37 @@ export async function checkPostTrips(): Promise<void> {
         continue;
       }
 
-      console.log(`[Scheduler] Processing completed reservation ${res.id} for client phone ${phone}`);
-
-      // a. Update status to COMPLETED
-      const { error: updateError } = await supabaseAdmin
-        .from('reservations')
-        .update({ status: 'COMPLETED' })
-        .eq('id', res.id);
-
-      if (updateError) {
-        console.error(`[Scheduler] Error updating status to COMPLETED for reservation ${res.id}:`, updateError);
-        continue;
-      }
-
-      // b. Send WhatsApp message
-      const text = `Como foi o dia a bordo? ✨\nSeu feedback é muito importante pra gente!\n\n⭐ Avalie no Google:\n${googleReviewUrl}\n\n🛥️ Avalie o barco e o marinheiro:\n${siteReviewUrl}`;
-      await sendWhatsAppMessage(phone, text);
-
-      // c. Find active conversation to save in message history and update stage
+      // Fetch active AI conversation to verify context and send message
       const { data: conv } = await supabaseAdmin
         .from('ia_conversations')
         .select('id')
         .eq('contact_phone', phone)
         .eq('status', 'AI_CONTROL')
+        .limit(1)
         .maybeSingle();
 
       if (conv) {
-        // Save in ia_messages
+        // Check if we already sent an evaluation message today/yesterday to prevent duplicates
+        const { data: alreadySentMsg } = await supabaseAdmin
+          .from('ia_messages')
+          .select('id')
+          .eq('conversation_id', conv.id)
+          .gte('created_at', `${yesterdayStr}T00:00:00Z`)
+          .like('content', '%Como foi o dia a bordo%')
+          .limit(1);
+
+        if (alreadySentMsg && alreadySentMsg.length > 0) {
+          console.log(`[Scheduler] Evaluation already sent to ${phone} for reservation ${res.id}.`);
+          continue;
+        }
+
+        console.log(`[Scheduler] Processing completed reservation ${res.id} for client phone ${phone}`);
+
+        // Send WhatsApp message
+        const text = `Como foi o dia a bordo? ✨\nSeu feedback é muito importante pra gente!\n\n⭐ Avalie no Google:\n${googleReviewUrl}\n\n🛥️ Avalie o barco e o marinheiro:\n${siteReviewUrl}`;
+        await sendWhatsAppMessage(phone, text);
+
+        // Save in message history
         await supabaseAdmin
           .from('ia_messages')
           .insert({
@@ -401,6 +405,97 @@ export async function checkSameDay9AmFollowUps(): Promise<void> {
 }
 
 /**
+ * Checks if there are active rentals today at 14:00 that have not confirmed boarding yet,
+ * and sends a reminder to the owners' group.
+ */
+export async function checkBoardingReminder(): Promise<void> {
+  // Executa apenas na janela das 14:00 - 14:15
+  const localTimeStr = new Date().toLocaleTimeString('en-US', {
+    timeZone: 'America/Sao_Paulo',
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+  const [hour, minute] = localTimeStr.split(':').map(Number);
+
+  if (hour !== 14 || minute > 15) {
+    return;
+  }
+
+  const localDate = new Date().toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' }).substring(0, 10); // YYYY-MM-DD
+  const ownersGroupJid = process.env.OWNERS_GROUP_JID;
+  if (!ownersGroupJid) {
+    console.warn('[Scheduler] OWNERS_GROUP_JID is not defined. Skipping boarding reminder.');
+    return;
+  }
+
+  try {
+    // 1. Query today's active commercial reservations that are NOT COMPLETED
+    const { data: reservations, error: resError } = await supabaseAdmin
+      .from('reservations')
+      .select('*, boats(*)')
+      .like('start_date', `${localDate}%`)
+      .not('status', 'in', '("COMPLETED","BLOCKED","CANCELLED","NO_SHOW")');
+
+    if (resError) throw resError;
+    if (!reservations || reservations.length === 0) {
+      console.log('[Scheduler] No pending boardings for today.');
+      return;
+    }
+
+    // 2. Check if we already sent the boarding reminder today to the owners group
+    const { data: groupConversations } = await supabaseAdmin
+      .from('ia_conversations')
+      .select('id')
+      .eq('contact_phone', ownersGroupJid)
+      .limit(1)
+      .maybeSingle();
+
+    if (groupConversations) {
+      const { data: sentMessages, error: msgError } = await supabaseAdmin
+        .from('ia_messages')
+        .select('id')
+        .eq('conversation_id', groupConversations.id)
+        .gte('created_at', `${localDate}T00:00:00Z`)
+        .like('content', '%já foi realizado o embarque%')
+        .limit(1);
+
+      if (!msgError && sentMessages && sentMessages.length > 0) {
+        console.log('[Scheduler] Boarding reminder already sent to owners group today.');
+        return;
+      }
+    }
+
+    // 3. Format reminder message listing the boats
+    const boatNames = reservations.map(r => r.boats?.name).filter(Boolean);
+    if (boatNames.length === 0) return;
+
+    let reminderText = `Olá, pessoal! 🛥️ Consta na agenda passeio(s) programado(s) para hoje, mas o embarque ainda não foi confirmado no sistema:\n\n`;
+    boatNames.forEach(name => {
+      reminderText += `• *${name}*\n`;
+    });
+    reminderText += `\nJá foi realizado o embarque? Por favor, respondam aqui no grupo confirmando para que eu possa atualizar a agenda (ex: *"Embarque feito da ${boatNames[0]}"* ou *"embarcou"*).`;
+
+    // 4. Send message
+    await sendWhatsAppMessage(ownersGroupJid, reminderText);
+
+    // 5. Register in DB
+    if (groupConversations) {
+      await supabaseAdmin.from('ia_messages').insert({
+        conversation_id: groupConversations.id,
+        sender: 'IA',
+        content: reminderText
+      });
+    }
+
+    console.log('[Scheduler] Sent boarding reminder to owners group.');
+
+  } catch (error) {
+    console.error('[Scheduler] Error in checkBoardingReminder:', error);
+  }
+}
+
+/**
  * Starts the cron agendador (runs every 15 minutes).
  */
 export function startScheduler(): void {
@@ -408,8 +503,9 @@ export function startScheduler(): void {
   cron.schedule('*/15 * * * *', async () => {
     await checkFollowUps();
     await checkSameDay9AmFollowUps();
+    await checkBoardingReminder();
     await checkPostTrips();
   });
-  console.log('[Scheduler] 15-minute follow-up and post-trip evaluation cron job initialized.');
+  console.log('[Scheduler] 15-minute follow-up, reminder and post-trip evaluation cron job initialized.');
 }
 

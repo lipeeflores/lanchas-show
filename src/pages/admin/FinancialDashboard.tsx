@@ -62,9 +62,13 @@ export default function FinancialDashboard() {
           monthly[mk].receita += Number(r.total_price);
           monthly[mk].despesa += opCost;
         } else {
-          const diff = Number(r.total_price) - partnerCost - opCost;
+          // Para barcos de parceiros, o lucro (comissão) só se realiza ao concluir o passeio (status COMPLETED)
+          // Barcos de parceiros não possuem custo de saída original_rate (opCost = 0)
+          const diff = r.status === 'COMPLETED'
+            ? Number(r.total_price) - Number(b.partner_net_value || 0)
+            : 0;
           monthly[mk].receita += diff;
-          monthly[mk].despesa += opCost;
+          monthly[mk].despesa += 0;
         }
     });
 
@@ -109,7 +113,11 @@ export default function FinancialDashboard() {
           cs += opCost;
           boatCount[b.id].rev += Number(r.total_price);
         } else {
-          const diff = Number(r.total_price) - partnerCost - opCost;
+          // Para barcos de parceiros, o lucro (comissão) só se realiza ao concluir o passeio (status COMPLETED)
+          // Barcos de parceiros não possuem custo de saída original_rate (opCost = 0)
+          const diff = r.status === 'COMPLETED'
+            ? Number(r.total_price) - Number(b.partner_net_value || 0)
+            : 0;
           lp += diff;
           boatCount[b.id].rev += diff;
         }

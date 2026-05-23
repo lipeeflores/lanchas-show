@@ -8,7 +8,8 @@ import {
   createPendingReservation,
   updateCustomerCPF,
   askOwnersGroup,
-  broadcastPromotion
+  broadcastPromotion,
+  completeBoarding
 } from './db';
 
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
@@ -677,6 +678,28 @@ const OWNERS_TOOLS: any[] = [
       },
       required: ['custom_message']
     }
+  },
+  {
+    name: 'complete_boarding',
+    description: 'Marca o embarque como realizado para uma lancha (especificando ID ou nome) em uma data específica, definindo o status da reserva como COMPLETED (Concluído) e computando os custos.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        boat_id: {
+          type: 'string',
+          description: 'O UUID da lancha (opcional se boat_name for fornecido).'
+        },
+        boat_name: {
+          type: 'string',
+          description: 'O nome da lancha (ex: "Tecnomarine", "Phantom") (opcional se boat_id for fornecido).'
+        },
+        date: {
+          type: 'string',
+          description: 'A data do passeio no formato YYYY-MM-DD (ex: 2026-05-25).'
+        }
+      },
+      required: ['date']
+    }
   }
 ];
 
@@ -708,10 +731,16 @@ AÇÕES SUPORTADAS:
      * Se eles NÃO passarem essas informações ou se recusarem (ex: "não tenho", "depois te passo", "bloqueia aí logo"), você deve responder educadamente informando que, por ser um aluguel para cliente, sem esses dados mínimos você NÃO consegue colocar na agenda automaticamente, e que eles precisarão acessar o sistema e preencher manualmente. Não chame a ferramenta 'create_pending_reservation' nesse caso de recusa.
 
 2. DISPARAR PROMOÇÕES (BROADCAST):
-   Se algum dono solicitar o envio de uma promoção ou mensagem para os clientes em negociação (ex: "manda promoção de 10% de desconto para fechar hoje para quem está negociando"), você deve:
-   - Formular uma mensagem promocional atrativa seguindo a identidade da Isabelle (ex: "Olá! ✨ Tenho uma novidade exclusiva...").
-   - Chamar a tool 'broadcast_promotion' com a mensagem formulada.
-   - Responder no grupo confirmando que enviou a promoção e informar a quantidade de clientes que receberam.
+    Se algum dono solicitar o envio de uma promoção ou mensagem para os clientes em negociação (ex: "manda promoção de 10% de desconto para fechar hoje para quem está negociando"), você deve:
+    - Formular uma mensagem promocional atrativa seguindo a identidade da Isabelle (ex: "Olá! ✨ Tenho uma novidade exclusiva...").
+    - Chamar a tool 'broadcast_promotion' com a mensagem formulada.
+    - Responder no grupo confirmando que enviou a promoção e informar a quantidade de clientes que receberam.
+
+3. CONFIRMAÇÃO DE EMBARQUE (MARCAR COMO CONCLUÍDO):
+    Se algum proprietário informar que o embarque foi realizado para uma lancha (ex: "embarque feito da Tecnomarine", "Tecnomarine embarcou", "Phantom saiu", "passeio liberado para João na Phantom"):
+    - Identifique a lancha e a data correspondente (geralmente hoje).
+    - Chame a tool 'complete_boarding' passando 'boat_name' ou 'boat_id' e a data correspondente 'date'.
+    - Confirme no grupo de forma profissional e simpática que o embarque foi registrado com sucesso e a agenda foi atualizada para CONCLUÍDO.
 
 Responda sempre de forma prestativa, organizada e profissional.`;
 
@@ -785,6 +814,9 @@ REGRAS ADICIONAIS DE DATA:
           } else if (toolName === 'broadcast_promotion') {
             const broadcastResult = await broadcastPromotion(toolArgs.custom_message);
             resultString = JSON.stringify(broadcastResult);
+          } else if (toolName === 'complete_boarding') {
+            const boardingResult = await completeBoarding(toolArgs);
+            resultString = JSON.stringify(boardingResult);
           } else {
             resultString = JSON.stringify({ error: `Tool ${toolName} not found` });
           }

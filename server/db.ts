@@ -578,3 +578,79 @@ export async function askOwnersGroup(conversationId: string, question: string): 
     return { error: error.message || 'Erro ao enviar a pergunta ao grupo de proprietários.' };
   }
 }
+
+/**
+ * Resolves a boat by ID or name, finds the active reservation for that boat on the specified date,
+ * and updates its status to 'COMPLETED'.
+ */
+export async function completeBoarding(data: {
+  boat_id?: string;
+  boat_name?: string;
+  date: string;
+}) {
+  try {
+    let boatId = data.boat_id;
+
+    // 1. Resolve boat by name if boat_id is not provided
+    if (!boatId && data.boat_name) {
+      const { data: boats, error: boatsError } = await supabaseAdmin
+        .from('boats')
+        .select('id, name')
+        .ilike('name', `%${data.boat_name}%`);
+
+      if (boatsError) throw boatsError;
+      if (!boats || boats.length === 0) {
+        return { success: false, error: `Nenhuma lancha encontrada com o nome "${data.boat_name}".` };
+      }
+      boatId = boats[0].id;
+    }
+
+    if (!boatId) {
+      return { success: false, error: 'Por favor, forneça o UUID ou o nome da lancha.' };
+    }
+
+    // Calculate dates matching the day (start_date starts with the date string YYYY-MM-DD)
+    const { data: resList, error: resError } = await supabaseAdmin
+      .from('reservations')
+      .select('id, status, boats(name)')
+      .eq('boat_id', boatId)
+      .like('start_date', `${data.date}%`);
+
+    if (resError) throw resError;
+    if (!resList || resList.length === 0) {
+      return { success: false, error: `Nenhuma reserva ativa encontrada para esta lancha na data ${data.date}.` };
+    }
+
+    // Filter to find reservations that are active (not BLOCKED, CANCELLED, NO_SHOW, and not already COMPLETED)
+    const reservation = resList.find(r => r.status !== 'CANCELLED' && r.status !== 'NO_SHOW');
+
+    if (!reservation) {
+      return { success: false, error: `Nenhuma reserva ativa encontrada para esta lancha na data ${data.date}.` };
+    }
+
+    const boatName = (reservation as any).boats?.name || (reservation as any).boats?.[0]?.name || '';
+
+    if (reservation.status === 'COMPLETED') {
+      return { success: true, message: `O embarque da lancha ${boatName} já constava como Concluído no sistema.`, reservation };
+    }
+
+    // 2. Update status to COMPLETED
+    const { data: updatedRes, error: updateError } = await supabaseAdmin
+      .from('reservations')
+      .update({ status: 'COMPLETED' })
+      .eq('id', reservation.id)
+      .select('*, boats(name)')
+      .single();
+
+    if (updateError) throw updateError;
+
+    const updatedBoatName = (updatedRes as any).boats?.name || (updatedRes as any).boats?.[0]?.name || '';
+
+    console.log(`[DB Helper] Boarding completed successfully for reservation ${reservation.id} (Boat: ${updatedBoatName})`);
+    return { success: true, message: `Embarque confirmado com sucesso! O status da reserva da lancha ${updatedBoatName} foi alterado para CONCLUÍDO e os custos operacionais foram computados.`, reservation: updatedRes };
+
+  } catch (error: any) {
+    console.error(`[DB Helper] Error completing boarding:`, error);
+    return { success: false, error: error.message || 'Erro interno ao registrar embarque.' };
+  }
+}
