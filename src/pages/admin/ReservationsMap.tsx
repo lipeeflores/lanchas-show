@@ -336,7 +336,9 @@ export default function ReservationsMap() {
       date: res.start_date ? new Date(res.start_date).toISOString().split('T')[0] : today.toISOString().split('T')[0],
       embarkation: res.boarding_point || '',
       destination: res.destination || '',
-      base_price: res.base_price_closed || 0,
+      base_price: (res.base_price_closed && Number(res.base_price_closed) !== 0)
+        ? Number(res.base_price_closed)
+        : (Number(res.total_reservation_value) || Number(res.total_price) || 0),
       paid_amount: res.paid_amount || 0,
       previous_paid_amount: res.paid_amount || 0,
       commission_value: res.commission_value || 0,

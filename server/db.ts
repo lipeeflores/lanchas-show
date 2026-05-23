@@ -73,23 +73,25 @@ export async function getPricingTierForDate(dateStr: string): Promise<PricingTie
  * Checks boat availability and rates for a given date.
  * Guarantees that own boats (owner_type = 'OWN') are sorted first in the list.
  */
-export async function checkBoatAvailability(dateStr: string) {
+export async function checkBoatAvailability(dateStr: string, includeBooked = false) {
   try {
     const pricingTier = await getPricingTierForDate(dateStr);
 
     // Fetch active reservations on this date (exclude CANCELLED and NO_SHOW)
     const { data: reservations } = await supabaseAdmin
       .from('reservations')
-      .select('boat_id, start_date, end_date')
+      .select('id, boat_id, start_date, end_date, status, total_price, total_reservation_value, customers(full_name, phone)')
       .not('status', 'in', '("CANCELLED","NO_SHOW")');
 
     const bookedBoatIds = new Set<string>();
+    const reservationsForDate = new Map<string, any>();
     if (reservations) {
       reservations.forEach(res => {
         const resStart = res.start_date ? res.start_date.substring(0, 10) : '';
         const resEnd = res.end_date ? res.end_date.substring(0, 10) : '';
         if (dateStr >= resStart && dateStr <= resEnd) {
           bookedBoatIds.add(res.boat_id);
+          reservationsForDate.set(res.boat_id, res);
         }
       });
     }
@@ -125,8 +127,8 @@ export async function checkBoatAvailability(dateStr: string) {
       throw new Error(boatsError?.message || 'Error fetching boats');
     }
 
-    // Filter out booked boats
-    const activeBoats = boats.filter(boat => !bookedBoatIds.has(boat.id));
+    // Filter out booked boats only if includeBooked is false
+    const activeBoats = includeBooked ? boats : boats.filter(boat => !bookedBoatIds.has(boat.id));
     const activeBoatIds = activeBoats.map(b => b.id);
 
     // Fetch routes for these active boats
@@ -184,6 +186,8 @@ export async function checkBoatAvailability(dateStr: string) {
           };
         });
 
+      const reservation = reservationsForDate.get(boat.id);
+
       return {
         id: boat.id,
         name: boat.name,
@@ -191,6 +195,14 @@ export async function checkBoatAvailability(dateStr: string) {
         size: boat.size,
         owner_type: boat.owner_type,
         is_own: isOwn,
+        available: !reservation,
+        current_reservation: reservation ? {
+          id: reservation.id,
+          status: reservation.status,
+          total_price: Number(reservation.total_price) || Number(reservation.total_reservation_value) || 0,
+          customer_name: reservation.customers?.full_name || null,
+          customer_phone: reservation.customers?.phone || null
+        } : null,
         normal_price: normalPrice,
         min_price: minPrice, // INTERNAL USE ONLY
         has_floating_mat: boat.has_floating_mat,
@@ -343,6 +355,7 @@ export async function createPendingReservation(data: {
           status: finalStatus,
           total_price: finalTotalPrice,
           total_reservation_value: finalTotalPrice,
+          base_price_closed: finalTotalPrice,
           passenger_count: finalPassengerCount,
           boarding_point: finalBoardingPoint,
           destination: finalDestination,
@@ -366,6 +379,7 @@ export async function createPendingReservation(data: {
           status: finalStatus,
           total_price: finalTotalPrice,
           total_reservation_value: finalTotalPrice,
+          base_price_closed: finalTotalPrice,
           passenger_count: finalPassengerCount,
           boarding_point: finalBoardingPoint,
           destination: finalDestination,

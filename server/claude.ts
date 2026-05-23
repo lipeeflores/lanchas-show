@@ -742,10 +742,23 @@ AÇÕES SUPORTADAS:
     - Chame a tool 'complete_boarding' passando 'boat_name' ou 'boat_id' e a data correspondente 'date'.
     - Confirme no grupo de forma profissional e simpática que o embarque foi registrado com sucesso e a agenda foi atualizada para CONCLUÍDO.
 
+4. CORREÇÃO / ATUALIZAÇÃO DE RESERVAS EXISTENTES:
+    Se algum proprietário pedir para corrigir dados de uma reserva já existente (ex: "corrige o telefone da cliente de hoje na Tecnomarine", "o número correto é 47999...", "troca o nome do cliente da reserva de amanhã"):
+    - PRIMEIRO, chame 'check_availability' para a data informada. A resposta incluirá TODOS os barcos (livres E ocupados) com os dados da reserva atual (nome do cliente, telefone, status, valor).
+    - Identifique a lancha correta e a reserva existente nos dados retornados.
+    - Chame 'create_pending_reservation' usando exatamente o MESMO 'boat_id' e 'date' da reserva existente, passando os dados corrigidos. O sistema atualizará a reserva existente automaticamente (não criará duplicada).
+    - NUNCA crie uma reserva em uma lancha diferente quando o pedido for de correção. Se o dono diz "corrige o telefone da reserva da Tecnomarine", você DEVE atualizar a reserva da Tecnomarine, NÃO criar uma nova na Phantom ou qualquer outra.
+    - Confirme a correção no grupo.
+
+5. FOTOS E MÍDIAS:
+    Se os proprietários enviarem uma foto ou imagem, você consegue ver e interpretar o conteúdo da imagem. Descreva o que vê se for relevante para a conversa. Se pedirem para repassar uma mídia para clientes, use a tool 'broadcast_promotion' com uma mensagem descritiva sobre a mídia.
+
 Responda sempre de forma prestativa, organizada e profissional.`;
 
 export async function getOwnersGroupResponse(
-  history: { sender: string; content: string }[]
+  history: { sender: string; content: string }[],
+  mediaBase64?: string,
+  mediaMimetype?: string
 ): Promise<string> {
   const messages: ChatMessage[] = [];
 
@@ -764,6 +777,37 @@ export async function getOwnersGroupResponse(
 
   if (messages.length === 0) {
     messages.push({ role: 'user', content: 'Olá' });
+  }
+
+  // Attach image to the last user message if media is present (Claude Vision)
+  const supportedImageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+  if (mediaBase64 && mediaMimetype && supportedImageTypes.includes(mediaMimetype)) {
+    const lastUserIdx = messages.length - 1;
+    if (lastUserIdx >= 0 && messages[lastUserIdx].role === 'user') {
+      const textContent = typeof messages[lastUserIdx].content === 'string'
+        ? messages[lastUserIdx].content
+        : 'Imagem enviada';
+      
+      let cleanBase64 = mediaBase64;
+      if (cleanBase64.includes(';base64,')) {
+        cleanBase64 = cleanBase64.split(';base64,')[1];
+      }
+
+      messages[lastUserIdx].content = [
+        {
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: mediaMimetype,
+            data: cleanBase64
+          }
+        },
+        {
+          type: 'text',
+          text: textContent
+        }
+      ];
+    }
   }
 
   let depth = 0;
@@ -806,13 +850,14 @@ REGRAS ADICIONAIS DE DATA:
 
         try {
           if (toolName === 'check_availability') {
-            const availability = await checkBoatAvailability(toolArgs.date);
+            // Pass includeBooked=true so owners can see all boats (including booked ones) and their reservation details
+            const availability = await checkBoatAvailability(toolArgs.date, true);
             resultString = JSON.stringify(availability);
           } else if (toolName === 'create_pending_reservation') {
             const resResult = await createPendingReservation(toolArgs);
             resultString = JSON.stringify(resResult);
           } else if (toolName === 'broadcast_promotion') {
-            const broadcastResult = await broadcastPromotion(toolArgs.custom_message);
+            const broadcastResult = await broadcastPromotion(toolArgs.custom_message, mediaBase64, mediaMimetype);
             resultString = JSON.stringify(broadcastResult);
           } else if (toolName === 'complete_boarding') {
             const boardingResult = await completeBoarding(toolArgs);
