@@ -429,3 +429,102 @@ export async function updateCustomerCPF(conversationId: string, cpfStr: string) 
     return { error: error.message || 'Erro ao atualizar CPF e gerar contrato.' };
   }
 }
+
+/**
+ * Sends a promotional broadcast message to all active AI-controlled conversations.
+ */
+export async function broadcastPromotion(customMessage: string) {
+  try {
+    // 1. Fetch all active AI_CONTROL conversations in negotiation stages
+    const { data: conversations, error: convError } = await supabaseAdmin
+      .from('ia_conversations')
+      .select('id, contact_phone')
+      .eq('status', 'AI_CONTROL')
+      .in('stage', ['novo', 'cotado', 'sinal_solicitado']);
+
+    if (convError) throw convError;
+    if (!conversations || conversations.length === 0) {
+      return { success: true, count: 0 };
+    }
+
+    const { sendWhatsAppMessage } = await import('./evolution');
+
+    let count = 0;
+    for (const conv of conversations) {
+      try {
+        // Send message via WhatsApp
+        await sendWhatsAppMessage(conv.contact_phone, customMessage);
+
+        // Save message in ia_messages
+        await supabaseAdmin
+          .from('ia_messages')
+          .insert({
+            conversation_id: conv.id,
+            sender: 'IA',
+            content: customMessage
+          });
+
+        count++;
+      } catch (err) {
+        console.error(`[DB Helper] Failed to send broadcast to ${conv.contact_phone}:`, err);
+      }
+    }
+
+    return { success: true, count };
+  } catch (error: any) {
+    console.error(`[DB Helper] Error broadcasting promotion:`, error);
+    return { error: error.message || 'Erro ao enviar transmissão promocional.' };
+  }
+}
+
+/**
+ * Escalates a client's question to the owners' group, storing the message ID to map the future reply.
+ */
+export async function askOwnersGroup(conversationId: string, question: string): Promise<any> {
+  const ownersGroupJid = process.env.OWNERS_GROUP_JID;
+  if (!ownersGroupJid) {
+    console.warn('[DB Helper] OWNERS_GROUP_JID is not defined in env. Cannot escalate question.');
+    return { error: 'O grupo de proprietários não está configurado nas variáveis de ambiente.' };
+  }
+
+  try {
+    // 1. Fetch conversation details to know the client
+    const { data: conv, error: convError } = await supabaseAdmin
+      .from('ia_conversations')
+      .select('contact_name, contact_phone')
+      .eq('id', conversationId)
+      .single();
+
+    if (convError || !conv) throw new Error(convError?.message || 'Conversa não encontrada');
+
+    const clientName = conv.contact_name || 'Desconhecido';
+    const clientPhone = conv.contact_phone || 'Desconhecido';
+
+    const messageText = `❓ *DÚVIDA DE CLIENTE*\n\n*Cliente:* ${clientName} (${clientPhone})\n*Dúvida:* ${question}\n\n_Para responder, responda (Marcar/Citar) esta mensagem com a resposta que deseja enviar ao cliente._`;
+
+    const { sendWhatsAppMessage } = await import('./evolution');
+    const response = await sendWhatsAppMessage(ownersGroupJid, messageText);
+
+    const messageId = response?.key?.id || response?.messageId || '';
+
+    if (messageId) {
+      // 2. Update conversation with the pending question and the message ID
+      await supabaseAdmin
+        .from('ia_conversations')
+        .update({
+          pending_owners_message_id: messageId,
+          pending_owners_question: question
+        })
+        .eq('id', conversationId);
+
+      console.log(`[DB Helper] Escalated question to owners' group. Message ID: ${messageId}`);
+      return { success: true, messageId };
+    } else {
+      console.warn('[DB Helper] Could not extract message ID from Evolution API response:', response);
+      return { success: true };
+    }
+  } catch (error: any) {
+    console.error(`[DB Helper] Error escalating question to owners' group:`, error);
+    return { error: error.message || 'Erro ao enviar a pergunta ao grupo de proprietários.' };
+  }
+}

@@ -173,6 +173,159 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
     return;
   }
 
+  // GROUP CHAT HANDLING (OWNERS GROUP)
+  const isGroup = remoteJid.endsWith('@g.us');
+  if (isGroup) {
+    if (fromMe) {
+      res.status(200).json({ status: 'ignored', reason: 'Group message sent by self' });
+      return;
+    }
+
+    const ownersGroupJid = process.env.OWNERS_GROUP_JID || '';
+    if (!ownersGroupJid) {
+      console.log(`[Owners Group] Group message received from JID: ${remoteJid}. Group Name: ${pushName}. Text: "${textContent}". Set OWNERS_GROUP_JID=${remoteJid} in your env to enable owners group integration!`);
+      res.status(200).json({ status: 'ignored', reason: 'Owners group not configured in env' });
+      return;
+    }
+
+    if (remoteJid === ownersGroupJid) {
+      console.log(`[Owners Group] Message received from owners group: "${textContent}"`);
+
+      messageQueue.enqueue(remoteJid, async () => {
+        try {
+          // 1. Check if it's a reply to an escalated question
+          const quotedMessageId = data.message?.extendedTextMessage?.contextInfo?.stanzaId;
+          if (quotedMessageId) {
+            const { data: pendingConv } = await supabaseAdmin
+              .from('ia_conversations')
+              .select('*')
+              .eq('pending_owners_message_id', quotedMessageId)
+              .maybeSingle();
+
+            if (pendingConv) {
+              console.log(`[Owners Group] Owner answered question for client ${pendingConv.contact_phone}. Answer: "${textContent}"`);
+
+              // 1a. Fetch history for the client conversation
+              const { data: history } = await supabaseAdmin
+                .from('ia_messages')
+                .select('sender, content')
+                .eq('conversation_id', pendingConv.id)
+                .order('created_at', { ascending: false })
+                .limit(20);
+              
+              const chronologicalHistory = (history || []).reverse();
+
+              // 1b. Call Claude to formulate response to the client using the owner's answer
+              const aiResponseText = await getAiResponse(
+                pendingConv.id, 
+                chronologicalHistory, 
+                pendingConv.contact_name, 
+                pendingConv.contact_phone, 
+                textContent
+              );
+
+              if (aiResponseText && aiResponseText.trim()) {
+                // Send to client
+                await sendWhatsAppMessage(pendingConv.contact_phone, aiResponseText);
+
+                // Save AI response in DB
+                await supabaseAdmin
+                  .from('ia_messages')
+                  .insert({
+                    conversation_id: pendingConv.id,
+                    sender: 'IA',
+                    content: aiResponseText
+                  });
+
+                // Clear pending status in database
+                await supabaseAdmin
+                  .from('ia_conversations')
+                  .update({
+                    pending_owners_message_id: null,
+                    pending_owners_question: null
+                  })
+                  .eq('id', pendingConv.id);
+
+                // Confirm back in the owners' group
+                await sendWhatsAppMessage(remoteJid, `✅ *Resposta enviada para o cliente ${pendingConv.contact_name} (${pendingConv.contact_phone})!*`);
+              }
+              return;
+            }
+          }
+
+          // 2. Process as a general manager query / command
+          let { data: groupConv } = await supabaseAdmin
+            .from('ia_conversations')
+            .select('*')
+            .eq('contact_phone', remoteJid)
+            .maybeSingle();
+
+          if (!groupConv) {
+            const { data: newGroupConv } = await supabaseAdmin
+              .from('ia_conversations')
+              .insert({
+                contact_name: pushName || 'Grupo de Proprietários',
+                contact_phone: remoteJid,
+                contact_type: 'CLIENT',
+                status: 'AI_CONTROL',
+                stage: 'novo',
+                subject: 'Grupo de Proprietários'
+              })
+              .select()
+              .single();
+            groupConv = newGroupConv;
+          }
+
+          if (groupConv) {
+            // Save the owner's message in the DB
+            await supabaseAdmin
+              .from('ia_messages')
+              .insert({
+                conversation_id: groupConv.id,
+                sender: 'CLIENT',
+                content: `${pushName}: ${textContent}` // Prepend owner's name so Claude knows who is talking
+              });
+
+            // Fetch history for the group (last 15 messages)
+            const { data: groupHistory } = await supabaseAdmin
+              .from('ia_messages')
+              .select('sender, content')
+              .eq('conversation_id', groupConv.id)
+              .order('created_at', { ascending: false })
+              .limit(15);
+            const chronologicalGroupHistory = (groupHistory || []).reverse();
+
+            // Call Claude using the new getOwnersGroupResponse function
+            const { getOwnersGroupResponse } = await import('./claude');
+            const aiResponseText = await getOwnersGroupResponse(chronologicalGroupHistory);
+
+            if (aiResponseText && aiResponseText.trim()) {
+              // Send response to the owners' group
+              await sendWhatsAppMessage(remoteJid, aiResponseText);
+
+              // Save response in DB
+              await supabaseAdmin
+                .from('ia_messages')
+                .insert({
+                  conversation_id: groupConv.id,
+                  sender: 'IA',
+                  content: aiResponseText
+                });
+            }
+          }
+        } catch (error) {
+          console.error(`[Owners Group] Error processing group message:`, error);
+        }
+      });
+
+      res.status(200).json({ status: 'received', type: 'owners_group' });
+      return;
+    }
+
+    res.status(200).json({ status: 'ignored', reason: 'Not the configured owners group' });
+    return;
+  }
+
   console.log(`[Webhook] Event: ${event} | Phone: ${phone} | fromMe: ${fromMe} | Msg: "${textContent.substring(0, 30)}..."`);
 
   if (fromMe) {

@@ -6,7 +6,9 @@ import {
   updateConversationStage, 
   updateConversationTargetDate,
   createPendingReservation,
-  updateCustomerCPF
+  updateCustomerCPF,
+  askOwnersGroup,
+  broadcastPromotion
 } from './db';
 
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
@@ -401,6 +403,34 @@ const CLAUDE_TOOLS: any[] = [
       },
       required: ['cpf']
     }
+  },
+  {
+    name: 'ask_owners_group',
+    description: 'Envia uma dúvida de cliente que você não sabe a resposta para o grupo de WhatsApp dos proprietários/donos.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        question: {
+          type: 'string',
+          description: 'A pergunta ou dúvida exata que precisa de resposta ou aprovação dos donos.'
+        }
+      },
+      required: ['question']
+    }
+  },
+  {
+    name: 'broadcast_promotion',
+    description: 'Dispara uma mensagem promocional ou oferta para todos os clientes em negociação ativa no momento (estágios novo, cotado, sinal_solicitado).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        custom_message: {
+          type: 'string',
+          description: 'O texto completo da promoção/mensagem que será enviado para os clientes.'
+        }
+      },
+      required: ['custom_message']
+    }
   }
 ];
 
@@ -430,7 +460,8 @@ export async function getAiResponse(
   conversationId: string, 
   history: { sender: string; content: string }[],
   clientName?: string,
-  clientPhone?: string
+  clientPhone?: string,
+  ownerAnswer?: string
 ): Promise<string> {
   // 1. Map history to Anthropic messages format, ensuring alternating roles (user/assistant)
   // and merging consecutive messages of the same role.
@@ -453,6 +484,15 @@ export async function getAiResponse(
   // Ensure the history is formatted correctly:
   if (messages.length === 0) {
     messages.push({ role: 'user', content: 'Olá' });
+  }
+
+  // If there's an owner answer to a pending question, append it to the client's conversation context
+  if (ownerAnswer) {
+    if (messages.length > 0 && messages[messages.length - 1].role === 'user') {
+      messages[messages.length - 1].content += `\n\n[RESPOSTA/INSTRUÇÃO DO GERENTE PARA ESTA DÚVIDA]: ${ownerAnswer}`;
+    } else {
+      messages.push({ role: 'user', content: `[RESPOSTA/INSTRUÇÃO DO GERENTE PARA ESTA DÚVIDA]: ${ownerAnswer}` });
+    }
   }
 
   // Construct dynamic system prompt containing the client metadata
@@ -519,6 +559,12 @@ REGRA ABSOLUTA DE DADOS DO CLIENTE:
           } else if (toolName === 'update_customer_cpf') {
             const cpfResult = await updateCustomerCPF(conversationId, toolArgs.cpf);
             resultString = JSON.stringify(cpfResult);
+          } else if (toolName === 'ask_owners_group') {
+            const askResult = await askOwnersGroup(conversationId, toolArgs.question);
+            resultString = JSON.stringify(askResult);
+          } else if (toolName === 'broadcast_promotion') {
+            const broadcastResult = await broadcastPromotion(toolArgs.custom_message);
+            resultString = JSON.stringify(broadcastResult);
           } else {
             resultString = JSON.stringify({ error: `Tool ${toolName} not found` });
           }
@@ -550,4 +596,198 @@ REGRA ABSOLUTA DE DADOS DO CLIENTE:
   }
 
   throw new Error('Claude exceeded maximum tool call recursion depth.');
+}
+
+const OWNERS_TOOLS: any[] = [
+  {
+    name: 'check_availability',
+    description: 'Consulta a disponibilidade, preços e catálogo das lanchas para uma data específica.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        date: {
+          type: 'string',
+          description: 'A data no formato YYYY-MM-DD (ex: 2026-12-25).'
+        }
+      },
+      required: ['date']
+    }
+  },
+  {
+    name: 'create_pending_reservation',
+    description: 'Cria um bloqueio ou reserva na agenda com status PENDING no sistema.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        phone: {
+          type: 'string',
+          description: 'O telefone do cliente (apenas números com DDI, ex: 554799999999).'
+        },
+        name: {
+          type: 'string',
+          description: 'O nome completo do cliente.'
+        },
+        boat_id: {
+          type: 'string',
+          description: 'O UUID da lancha escolhida.'
+        },
+        date: {
+          type: 'string',
+          description: 'A data do passeio no formato YYYY-MM-DD.'
+        },
+        boarding_point: {
+          type: 'string',
+          description: 'O ponto de embarque acordado.'
+        },
+        destination: {
+          type: 'string',
+          description: 'O destino principal do passeio.'
+        },
+        passenger_count: {
+          type: 'number',
+          description: 'O número total de passageiros.'
+        },
+        floating_mat_status: {
+          type: 'string',
+          enum: ['none', 'paid', 'courtesy'],
+          description: 'O status do tapete flutuante (none, paid, courtesy).'
+        },
+        total_price: {
+          type: 'number',
+          description: 'O valor total cobrado.'
+        }
+      },
+      required: ['phone', 'name', 'boat_id', 'date', 'boarding_point', 'destination', 'passenger_count', 'floating_mat_status', 'total_price']
+    }
+  },
+  {
+    name: 'broadcast_promotion',
+    description: 'Dispara uma mensagem promocional ou oferta para todos os clientes em negociação ativa no momento.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        custom_message: {
+          type: 'string',
+          description: 'O texto completo da promoção/mensagem que será enviado para os clientes.'
+        }
+      },
+      required: ['custom_message']
+    }
+  }
+];
+
+const OWNERS_SYSTEM_PROMPT = `Você é Isabelle, Executiva de Vendas e Gerente da Lanchas Show.
+Aqui você está conversando no grupo interno dos PROPRIETÁRIOS (donos) das lanchas.
+
+Seu objetivo é ajudar os proprietários a gerenciar a agenda e enviar avisos em massa para os clientes.
+
+AÇÕES SUPORTADAS:
+
+1. BLOQUEIO / RESERVA MANUAL POR PARTE DOS DONOS:
+   Se algum dono disser que alugou um barco ou que quer bloquear (ex: "aluguei a Phantom para sábado", "bloqueia a Tecnomarine amanhã"), você deve:
+   - Identificar a lancha e a data.
+   - Solicitar educadamente no grupo os dados que faltam para o cadastro da reserva na agenda:
+     1. Nome completo do cliente
+     2. Telefone do cliente (WhatsApp)
+     3. Tapete flutuante (contratado pago R$300, cortesia ou não incluso)
+     4. Horas extras (se houver)
+     5. Valor total cobrado e valor do sinal recebido
+     6. Se o cliente já assinou o termo/contrato
+   - Assim que eles fornecerem as informações, chame a tool 'create_pending_reservation' para salvar no banco de dados.
+   - Confirme no grupo que a lancha foi bloqueada na agenda para aquela data.
+
+2. DISPARAR PROMOÇÕES (BROADCAST):
+   Se algum dono solicitar o envio de uma promoção ou mensagem para os clientes em negociação (ex: "manda promoção de 10% de desconto para fechar hoje para quem está negociando"), você deve:
+   - Formular uma mensagem promocional atrativa seguindo a identidade da Isabelle (ex: "Olá! ✨ Tenho uma novidade exclusiva...").
+   - Chamar a tool 'broadcast_promotion' com a mensagem formulada.
+   - Responder no grupo confirmando que enviou a promoção e informar a quantidade de clientes que receberam.
+
+Responda sempre de forma prestativa, organizada e profissional.`;
+
+export async function getOwnersGroupResponse(
+  history: { sender: string; content: string }[]
+): Promise<string> {
+  const messages: ChatMessage[] = [];
+
+  history.forEach(msg => {
+    const role = msg.sender === 'CLIENT' ? 'user' : 'assistant';
+    if (messages.length > 0 && messages[messages.length - 1].role === role) {
+      messages[messages.length - 1].content += '\n' + msg.content;
+    } else {
+      messages.push({ role, content: msg.content });
+    }
+  });
+
+  if (messages.length > 0 && messages[0].role === 'assistant') {
+    messages.unshift({ role: 'user', content: 'Olá' });
+  }
+
+  if (messages.length === 0) {
+    messages.push({ role: 'user', content: 'Olá' });
+  }
+
+  let depth = 0;
+  const maxDepth = 5;
+
+  while (depth < maxDepth) {
+    depth++;
+    console.log(`[Claude Owners Group] Calling messages loop. Depth: ${depth}`);
+    const response = await callClaudeAPI(OWNERS_SYSTEM_PROMPT, messages, OWNERS_TOOLS);
+
+    messages.push({
+      role: 'assistant',
+      content: response.content
+    });
+
+    const toolUseBlocks = response.content.filter((block: any) => block.type === 'tool_use');
+
+    if (toolUseBlocks.length > 0) {
+      const toolResults: any[] = [];
+
+      for (const toolCall of toolUseBlocks) {
+        const toolName = toolCall.name;
+        const toolArgs = toolCall.input || {};
+        const toolCallId = toolCall.id;
+
+        console.log(`[Claude Owners Group] LLM called tool: ${toolName} with args:`, toolArgs);
+        let resultString = '';
+
+        try {
+          if (toolName === 'check_availability') {
+            const availability = await checkBoatAvailability(toolArgs.date);
+            resultString = JSON.stringify(availability);
+          } else if (toolName === 'create_pending_reservation') {
+            const resResult = await createPendingReservation(toolArgs);
+            resultString = JSON.stringify(resResult);
+          } else if (toolName === 'broadcast_promotion') {
+            const broadcastResult = await broadcastPromotion(toolArgs.custom_message);
+            resultString = JSON.stringify(broadcastResult);
+          } else {
+            resultString = JSON.stringify({ error: `Tool ${toolName} not found` });
+          }
+        } catch (error: any) {
+          console.error(`[Claude Owners Group] Error executing tool ${toolName}:`, error);
+          resultString = JSON.stringify({ error: error.message || 'Erro de execução da ferramenta.' });
+        }
+
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: toolCallId,
+          content: resultString
+        });
+      }
+
+      messages.push({
+        role: 'user',
+        content: toolResults
+      });
+
+      continue;
+    }
+
+    const textBlock = response.content.find((block: any) => block.type === 'text');
+    return textBlock?.text || '';
+  }
+
+  throw new Error('Claude Owners Group exceeded maximum tool call recursion depth.');
 }
