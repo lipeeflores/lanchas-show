@@ -125,42 +125,82 @@ export async function checkBoatAvailability(dateStr: string) {
       throw new Error(boatsError?.message || 'Error fetching boats');
     }
 
-    // Filter out booked boats and map their seasonal prices
-    const availableBoats = boats
-      .filter(boat => !bookedBoatIds.has(boat.id))
-      .map(boat => {
-        let normalPrice = Number(boat.daily_rate) || 0;
-        let minPrice = Number(boat.daily_rate) || 0;
+    // Filter out booked boats
+    const activeBoats = boats.filter(boat => !bookedBoatIds.has(boat.id));
+    const activeBoatIds = activeBoats.map(b => b.id);
 
-        if (pricingTier === 'high_season') {
-          normalPrice = Number(boat.price_high_season) || normalPrice;
-          minPrice = Number(boat.min_price_high_season) || normalPrice;
-        } else if (pricingTier === 'weekend_holiday') {
-          normalPrice = Number(boat.price_weekend_holiday) || normalPrice;
-          minPrice = Number(boat.min_price_weekend_holiday) || normalPrice;
-        } else {
-          normalPrice = Number(boat.price_low_season) || normalPrice;
-          minPrice = Number(boat.min_price_low_season) || normalPrice;
-        }
+    // Fetch routes for these active boats
+    let routes: any[] = [];
+    if (activeBoatIds.length > 0) {
+      const { data: routesData, error: routesError } = await supabaseAdmin
+        .from('boat_routes_pricing')
+        .select('*')
+        .in('boat_id', activeBoatIds);
+      if (!routesError && routesData) {
+        routes = routesData;
+      }
+    }
 
-        const isOwn = boat.owner_type === 'OWN';
+    // Map boats and seasonal prices
+    const availableBoats = activeBoats.map(boat => {
+      let normalPrice = Number(boat.daily_rate) || 0;
+      let minPrice = Number(boat.daily_rate) || 0;
 
-        return {
-          id: boat.id,
-          name: boat.name,
-          capacity: boat.capacity,
-          size: boat.size,
-          owner_type: boat.owner_type,
-          is_own: isOwn,
-          normal_price: normalPrice,
-          min_price: minPrice, // INTERNAL USE ONLY
-          has_floating_mat: boat.has_floating_mat,
-          floating_mat_price: Number(boat.floating_mat_price) || 0,
-          catalogo_url: boat.catalogo_url || null,
-          partner_name: boat.partners?.name || null,
-          partner_phone: boat.partners?.contact_phone || null
-        };
-      });
+      if (pricingTier === 'high_season') {
+        normalPrice = Number(boat.price_high_season) || normalPrice;
+        minPrice = Number(boat.min_price_high_season) || normalPrice;
+      } else if (pricingTier === 'weekend_holiday') {
+        normalPrice = Number(boat.price_weekend_holiday) || normalPrice;
+        minPrice = Number(boat.min_price_weekend_holiday) || normalPrice;
+      } else {
+        normalPrice = Number(boat.price_low_season) || normalPrice;
+        minPrice = Number(boat.min_price_low_season) || normalPrice;
+      }
+
+      const isOwn = boat.owner_type === 'OWN';
+
+      const boatRoutes = routes
+        .filter(r => r.boat_id === boat.id)
+        .map(r => {
+          let routeNormalPrice = 0;
+          let routeMinPrice = 0;
+
+          if (pricingTier === 'high_season') {
+            routeNormalPrice = Number(r.price_high_season) || 0;
+            routeMinPrice = Number(r.min_price_high_season) || 0;
+          } else if (pricingTier === 'weekend_holiday') {
+            routeNormalPrice = Number(r.price_weekend_holiday) || 0;
+            routeMinPrice = Number(r.min_price_weekend_holiday) || 0;
+          } else {
+            routeNormalPrice = Number(r.price_low_season) || 0;
+            routeMinPrice = Number(r.min_price_low_season) || 0;
+          }
+
+          return {
+            embarkation_point: r.embarkation_point,
+            destination_point: r.destination_point,
+            normal_price: routeNormalPrice,
+            min_price: routeMinPrice
+          };
+        });
+
+      return {
+        id: boat.id,
+        name: boat.name,
+        capacity: boat.capacity,
+        size: boat.size,
+        owner_type: boat.owner_type,
+        is_own: isOwn,
+        normal_price: normalPrice,
+        min_price: minPrice, // INTERNAL USE ONLY
+        has_floating_mat: boat.has_floating_mat,
+        floating_mat_price: Number(boat.floating_mat_price) || 0,
+        catalogo_url: boat.catalogo_url || null,
+        partner_name: boat.partners?.name || null,
+        partner_phone: boat.partners?.contact_phone || null,
+        routes: boatRoutes
+      };
+    });
 
     // ORDER BY is_own DESC (OWN fleet comes first)
     availableBoats.sort((a, b) => {
