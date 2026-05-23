@@ -929,6 +929,50 @@ const Footer = () => {
   );
 };
 
+const normalizeStr = (str: string) => {
+  if (!str) return '';
+  return str
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '')
+    .trim();
+};
+
+const formatDisplayLabel = (label: string) => {
+  const norm = normalizeStr(label);
+  if (norm === 'caixadaco') return "Caixa d'Aço";
+  if (norm === 'orladebalneario') return "Orla de Balneário";
+  if (norm === 'balneariocamboriu') return "Balneário Camboriú";
+  if (norm === 'portobelo') return "Porto Belo";
+  if (norm === 'itapema') return "Itapema";
+  if (norm === 'laranjeiras') return "Laranjeiras";
+  if (norm === 'sepultura') return "Sepultura";
+  return label;
+};
+
+const getUniqueOptions = (items: string[]) => {
+  const map = new Map<string, string>();
+  items.forEach(item => {
+    if (!item) return;
+    const normalized = normalizeStr(item);
+    if (!map.has(normalized)) {
+      map.set(normalized, item);
+    } else {
+      const existing = map.get(normalized)!;
+      if (item.includes("'") && !existing.includes("'")) {
+        map.set(normalized, item);
+      } else if (item.length > existing.length) {
+        map.set(normalized, item);
+      }
+    }
+  });
+  return Array.from(map.values()).map(original => ({
+    value: original,
+    label: formatDisplayLabel(original)
+  }));
+};
+
 export default function Home() {
   const [allBoats, setAllBoats] = useState<any[]>([]);
   const [filteredBoats, setFilteredBoats] = useState<any[]>([]);
@@ -983,25 +1027,29 @@ export default function Home() {
     fetchData();
   }, []);
 
-  // Build dynamic dropdown options from routes
-  const embarkOptions = [...new Set(routes.map(r => r.embarkation_point))].map(v => ({ value: v, label: v }));
-  const destOptions = [...new Set(routes.map(r => r.destination_point))].map(v => ({ value: v, label: v }));
+  // Build dynamic dropdown options from routes and boats
+  const rawEmbarks = routes.map(r => r.embarkation_point);
+  const rawDests = routes.map(r => r.destination_point);
 
   // Fallback: if no routes configured yet, use boat boarding_points/allowed_destinations
-  if (embarkOptions.length === 0) {
-    const allEmbarks = [...new Set(allBoats.flatMap(b => b.boarding_points || []))];
-    allEmbarks.forEach(v => embarkOptions.push({ value: v, label: v }));
+  if (rawEmbarks.length === 0) {
+    rawEmbarks.push(...allBoats.flatMap(b => b.boarding_points || []));
   }
-  if (destOptions.length === 0) {
-    const allDests = [...new Set(allBoats.flatMap(b => b.allowed_destinations || []))];
-    allDests.forEach(v => destOptions.push({ value: v, label: v }));
+  if (rawDests.length === 0) {
+    rawDests.push(...allBoats.flatMap(b => b.allowed_destinations || []));
   }
+
+  const embarkOptions = getUniqueOptions(rawEmbarks);
+  const destOptions = getUniqueOptions(rawDests);
 
   const handleSearch = () => {
     let results = [...allBoats];
 
+    const searchLocalNorm = normalizeStr(searchParams.local);
+    const searchDestNorm = normalizeStr(searchParams.destino);
+
     // 1. Filter by routes if embark/dest selected
-    if (searchParams.local || searchParams.destino) {
+    if (searchLocalNorm || searchDestNorm) {
       results = results.filter(b => {
         // Se a lancha tiver rotas especificadas em boat_routes_pricing, ela precisa dar match nelas
         const hasRoutePricing = routes.some(r => r.boat_id === b.id);
@@ -1009,13 +1057,13 @@ export default function Home() {
         if (hasRoutePricing) {
           return routes.some(r => 
             r.boat_id === b.id &&
-            (!searchParams.local || r.embarkation_point === searchParams.local) &&
-            (!searchParams.destino || r.destination_point === searchParams.destino)
+            (!searchLocalNorm || normalizeStr(r.embarkation_point) === searchLocalNorm) &&
+            (!searchDestNorm || normalizeStr(r.destination_point) === searchDestNorm)
           );
         } else {
           // Fallback para embarcações sem rotas precificadas específicas
-          const matchEmb = !searchParams.local || (b.boarding_points || []).includes(searchParams.local);
-          const matchDest = !searchParams.destino || (b.allowed_destinations || []).includes(searchParams.destino);
+          const matchEmb = !searchLocalNorm || (b.boarding_points || []).some((p: string) => normalizeStr(p) === searchLocalNorm);
+          const matchDest = !searchDestNorm || (b.allowed_destinations || []).some((p: string) => normalizeStr(p) === searchDestNorm);
           return matchEmb && matchDest;
         }
       });
