@@ -279,9 +279,9 @@ export async function createPendingReservation(data: {
     const finalName = data.name || 'Bloqueio / Manutenção';
     const finalBoardingPoint = data.boarding_point || 'Porto Belo';
     const finalDestination = data.destination || 'Caixa d\'Aço';
-    const finalPassengerCount = data.passenger_count || 1;
+    const finalPassengerCount = Number(data.passenger_count) || 1;
     const finalFloatingMat = data.floating_mat_status || 'none';
-    const finalTotalPrice = data.total_price || 0;
+    const finalTotalPrice = Number(data.total_price) || 0;
     const finalStatus = data.status || 'PENDING';
 
     // 1. Resolve or create customer

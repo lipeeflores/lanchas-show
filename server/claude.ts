@@ -654,7 +654,7 @@ const OWNERS_TOOLS: any[] = [
         },
         total_price: {
           type: 'number',
-          description: 'O valor total cobrado.'
+          description: 'O valor total cobrado pelo aluguel (fundamental para DRE e balanço financeiro).'
         },
         status: {
           type: 'string',
@@ -701,9 +701,10 @@ AÇÕES SUPORTADAS:
        2. Telefone do cliente (WhatsApp)
        3. Tapete flutuante (contratado pago R$300, cortesia ou não incluso)
        4. Horas extras (se houver)
-       5. Valor total cobrado e valor do sinal recebido
+       5. Valor total cobrado (valor do aluguel) e valor do sinal recebido
        6. Se o cliente já assinou o termo/contrato
      * Se eles fornecerem os dados, chame a ferramenta 'create_pending_reservation' com os dados informados e 'status': 'PENDING'.
+       ATENÇÃO: Mapeie obrigatoriamente o valor total do aluguel informado para o parâmetro 'total_price' da ferramenta como um número (ex: 4500). Isso é de extrema importância para o DRE e fluxo de caixa do sistema. Não deixe o 'total_price' em branco ou nulo se o valor foi informado.
      * Se eles NÃO passarem essas informações ou se recusarem (ex: "não tenho", "depois te passo", "bloqueia aí logo"), você deve responder educadamente informando que, por ser um aluguel para cliente, sem esses dados mínimos você NÃO consegue colocar na agenda automaticamente, e que eles precisarão acessar o sistema e preencher manualmente. Não chame a ferramenta 'create_pending_reservation' nesse caso de recusa.
 
 2. DISPARAR PROMOÇÕES (BROADCAST):
