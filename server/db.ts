@@ -319,29 +319,69 @@ export async function createPendingReservation(data: {
     const startDate = `${data.date}T10:00:00-03:00`;
     const endDate = `${data.date}T18:00:00-03:00`;
 
-    // 2. Insert reservation
-    const { data: reservation, error: resError } = await supabaseAdmin
+    // 2. Check if there is already an existing reservation for this boat and date to avoid duplicates and allow updates
+    const { data: existingRes, error: findError } = await supabaseAdmin
       .from('reservations')
-      .insert({
-        boat_id: data.boat_id,
-        customer_id: customer.id,
-        start_date: startDate,
-        end_date: endDate,
-        status: finalStatus,
-        total_price: finalTotalPrice,
-        total_reservation_value: finalTotalPrice,
-        passenger_count: finalPassengerCount,
-        boarding_point: finalBoardingPoint,
-        destination: finalDestination,
-        floating_mat_status: finalFloatingMat,
-        tapete_status: tapeteStatus
-      })
-      .select('*, boats(name)')
-      .single();
+      .select('id')
+      .eq('boat_id', data.boat_id)
+      .eq('start_date', startDate)
+      .maybeSingle();
+
+    if (findError) {
+      console.warn("[DB Helper] Error finding existing reservation, proceeding to insert:", findError.message);
+    }
+
+    let reservation = null;
+    let resError = null;
+
+    if (existingRes?.id) {
+      console.log(`[DB Helper] Reservation already exists (ID: ${existingRes.id}). Updating it...`);
+      const { data: updatedRes, error } = await supabaseAdmin
+        .from('reservations')
+        .update({
+          customer_id: customer.id,
+          status: finalStatus,
+          total_price: finalTotalPrice,
+          total_reservation_value: finalTotalPrice,
+          passenger_count: finalPassengerCount,
+          boarding_point: finalBoardingPoint,
+          destination: finalDestination,
+          floating_mat_status: finalFloatingMat,
+          tapete_status: tapeteStatus
+        })
+        .eq('id', existingRes.id)
+        .select('*, boats(name)')
+        .single();
+      
+      resError = error;
+      reservation = updatedRes;
+    } else {
+      const { data: insertedRes, error } = await supabaseAdmin
+        .from('reservations')
+        .insert({
+          boat_id: data.boat_id,
+          customer_id: customer.id,
+          start_date: startDate,
+          end_date: endDate,
+          status: finalStatus,
+          total_price: finalTotalPrice,
+          total_reservation_value: finalTotalPrice,
+          passenger_count: finalPassengerCount,
+          boarding_point: finalBoardingPoint,
+          destination: finalDestination,
+          floating_mat_status: finalFloatingMat,
+          tapete_status: tapeteStatus
+        })
+        .select('*, boats(name)')
+        .single();
+      
+      resError = error;
+      reservation = insertedRes;
+    }
 
     if (resError) throw resError;
 
-    console.log(`[DB Helper] Created reservation (${finalStatus}) for client ${finalName} on boat ${(reservation as any).boats?.name}`);
+    console.log(`[DB Helper] Saved reservation (${finalStatus}) for client ${finalName} on boat ${(reservation as any).boats?.name}`);
     return { success: true, reservation };
   } catch (error: any) {
     console.error(`[DB Helper] Error creating reservation:`, error);

@@ -14,7 +14,8 @@ export default function Dashboard() {
   const [stats, setStats] = useState({
       inWater: 0,
       checkins: 0,
-      revenue24h: 0
+      revenue24h: 0,
+      negotiatingToday: 0
   });
 
   const [loading, setLoading] = useState(true);
@@ -98,10 +99,38 @@ export default function Dashboard() {
                 .filter(r => new Date(r.start_date) >= now && new Date(r.start_date) <= tomorrow)
                 .reduce((acc, r) => acc + Number(r.total_price), 0);
 
+            // Fetch active conversations in negotiation stages today
+            let negotiatingToday = 0;
+            try {
+              const startOfToday = new Date();
+              startOfToday.setHours(0, 0, 0, 0);
+
+              const { data: convsData } = await supabase
+                  .from('ia_conversations')
+                  .select('id, created_at')
+                  .in('stage', ['novo', 'cotado', 'sinal_solicitado', 'pix_enviado']);
+
+              const { data: msgData } = await supabase
+                  .from('ia_messages')
+                  .select('conversation_id')
+                  .gte('created_at', startOfToday.toISOString())
+                  .eq('sender', 'CLIENT');
+
+              const activeConvIds = new Set(msgData?.map(m => m.conversation_id) || []);
+              negotiatingToday = (convsData || []).filter(c => {
+                  const isCreatedToday = new Date(c.created_at) >= startOfToday;
+                  const isMsgToday = activeConvIds.has(c.id);
+                  return isCreatedToday || isMsgToday;
+              }).length;
+            } catch (err) {
+              console.error('Error fetching negotiating statistics:', err);
+            }
+
             setStats({
                inWater,
                checkins,
-               revenue24h 
+               revenue24h,
+               negotiatingToday
             });
 
             // Action Requests: Partner approvals (only future/today)
@@ -218,7 +247,7 @@ export default function Dashboard() {
             {/* Métricas do Dia */}
             <section>
                 <h2 className="text-sm font-bold uppercase tracking-widest text-gray-500 mb-4">Métricas do Dia</h2>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
                 
                 <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-xl relative overflow-hidden group">
                     <div className="absolute -right-6 -top-6 text-slate-800/50 group-hover:text-slate-800 transition-colors"><Ship className="w-32 h-32" /></div>
@@ -238,18 +267,31 @@ export default function Dashboard() {
                     <div className="relative z-10">
                     <p className="text-gray-400 text-sm font-medium mb-1">Check-ins 24h</p>
                     <p className="text-4xl font-bold text-white mb-2">{stats.checkins} <span className="text-lg text-gray-500 font-normal">grupos</span></p>
-                    {stats.checkins > 0 && <p className="text-sm text-yellow-500 flex items-center gap-1 mt-4"><Clock className="w-4 h-4"/> Próximo listado no calendário</p>}
+                    {stats.checkins > 0 && <p className="text-sm text-yellow-500 flex items-center gap-1 mt-4"><Clock className="w-4 h-4"/> Próximo no calendário</p>}
                     </div>
                 </motion.div>
 
-                <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.2 }} className="bg-gradient-to-br from-slate-900 to-slate-800 border border-yellow-500/30 p-6 rounded-2xl shadow-[0_0_30px_rgba(234,179,8,0.05)] relative overflow-hidden group">
-                    <div className="absolute -right-6 -top-6 text-yellow-500/5 group-hover:text-yellow-500/10 transition-colors"><DollarSign className="w-32 h-32" /></div>
+                <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.2 }} className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-xl relative overflow-hidden group">
+                    <div className="absolute -right-6 -top-6 text-slate-800/50 group-hover:text-slate-800 transition-colors"><DollarSign className="w-32 h-32" /></div>
                     <div className="relative z-10">
-                    <p className="text-yellow-500/80 text-sm font-medium mb-1">Receita Confirmada 24h</p>
+                    <p className="text-gray-400 text-sm font-medium mb-1">Receita Confirmada 24h</p>
                     <p className="text-4xl font-bold text-yellow-500 mb-2">
                         {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(stats.revenue24h)}
                     </p>
                     <p className="text-sm text-gray-400 mt-4">Venda atrelada aos Check-ins</p>
+                    </div>
+                </motion.div>
+
+                <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.3 }} className="bg-gradient-to-br from-slate-900 to-slate-800 border border-yellow-500/30 p-6 rounded-2xl shadow-[0_0_30px_rgba(234,179,8,0.05)] relative overflow-hidden group">
+                    <div className="absolute -right-6 -top-6 text-yellow-500/5 group-hover:text-yellow-500/10 transition-colors"><Bot className="w-32 h-32" /></div>
+                    <div className="relative z-10">
+                    <p className="text-yellow-500/80 text-sm font-medium mb-1">Em Negociação Hoje</p>
+                    <p className="text-4xl font-bold text-white mb-2">{stats.negotiatingToday} <span className="text-lg text-gray-500 font-normal">leads</span></p>
+                    {stats.negotiatingToday > 0 ? (
+                        <p className="text-sm text-yellow-500 flex items-center gap-1 mt-4"><Clock className="w-4 h-4"/> Clientes conversando com a IA</p>
+                    ) : (
+                        <p className="text-sm text-gray-400 mt-4">Dia calmo nas vendas</p>
+                    )}
                     </div>
                 </motion.div>
 
