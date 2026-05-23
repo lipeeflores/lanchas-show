@@ -700,6 +700,24 @@ const OWNERS_TOOLS: any[] = [
       },
       required: ['date']
     }
+  },
+  {
+    name: 'answer_client_question',
+    description: 'Responde a dúvida pendente de um cliente que foi escalada para o grupo dos proprietários. Use quando um proprietário fornecer a resposta para uma dúvida de cliente listada nas PERGUNTAS PENDENTES.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        conversation_id: {
+          type: 'string',
+          description: 'O ID da conversa do cliente que tem a dúvida pendente (fornecido na lista de PERGUNTAS PENDENTES).'
+        },
+        answer: {
+          type: 'string',
+          description: 'A resposta/informação fornecida pelo proprietário para repassar ao cliente.'
+        }
+      },
+      required: ['conversation_id', 'answer']
+    }
   }
 ];
 
@@ -753,12 +771,21 @@ AÇÕES SUPORTADAS:
 5. FOTOS E MÍDIAS:
     Se os proprietários enviarem uma foto ou imagem, você consegue ver e interpretar o conteúdo da imagem. Descreva o que vê se for relevante para a conversa. Se pedirem para repassar uma mídia para clientes, use a tool 'broadcast_promotion' com uma mensagem descritiva sobre a mídia.
 
+6. RESPONDER DÚVIDAS PENDENTES DE CLIENTES:
+    Abaixo você receberá uma lista de PERGUNTAS PENDENTES DE CLIENTES que foram escaladas para este grupo e ainda não foram respondidas.
+    - Se algum proprietário enviar uma mensagem que pareça ser a resposta para uma dessas dúvidas (mesmo que NÃO cite/responda diretamente a mensagem original), você DEVE identificar qual pergunta está sendo respondida.
+    - Chame IMEDIATAMENTE a tool 'answer_client_question' passando o 'conversation_id' da pergunta pendente e a 'answer' com a informação fornecida pelo proprietário.
+    - A ferramenta vai formular uma resposta adequada e enviar automaticamente para o cliente.
+    - Após chamar a ferramenta, confirme no grupo que a resposta foi enviada ao cliente.
+    - PRIORIZE SEMPRE responder perguntas pendentes de clientes. Se um dono disser algo que pode ser resposta a uma dúvida pendente, trate como resposta primeiro.
+
 Responda sempre de forma prestativa, organizada e profissional.`;
 
 export async function getOwnersGroupResponse(
   history: { sender: string; content: string }[],
   mediaBase64?: string,
-  mediaMimetype?: string
+  mediaMimetype?: string,
+  pendingQuestions?: { conversation_id: string; client_name: string; client_phone: string; question: string }[]
 ): Promise<string> {
   const messages: ChatMessage[] = [];
 
@@ -816,6 +843,17 @@ export async function getOwnersGroupResponse(
   const localStr = new Date().toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' }); // "YYYY-MM-DD HH:MM:SS"
   const currentDate = localStr.substring(0, 10);
 
+  // Build pending questions context
+  let pendingQuestionsContext = '';
+  if (pendingQuestions && pendingQuestions.length > 0) {
+    pendingQuestionsContext = '\n\nPERGUNTAS PENDENTES DE CLIENTES (aguardando resposta dos proprietários):\n';
+    pendingQuestions.forEach((pq, i) => {
+      pendingQuestionsContext += `${i + 1}. Cliente: ${pq.client_name} (${pq.client_phone}) — conversation_id: ${pq.conversation_id}\n   Dúvida: "${pq.question}"\n`;
+    });
+  } else {
+    pendingQuestionsContext = '\n\nPERGUNTAS PENDENTES DE CLIENTES: Nenhuma dúvida pendente no momento.';
+  }
+
   const dynamicOwnersSystemPrompt = `${OWNERS_SYSTEM_PROMPT}
 
 DADOS DO SISTEMA E DATA ATUAL:
@@ -823,7 +861,7 @@ DADOS DO SISTEMA E DATA ATUAL:
 
 REGRAS ADICIONAIS DE DATA:
 - Ao analisar comandos dos donos como "segunda-feira dia 25" ou "amanhã", tome como referência que a data de hoje é ${currentDate}.
-- Calcule a data correta correspondente a esse comando relativo e passe no formato YYYY-MM-DD para as ferramentas.`;
+- Calcule a data correta correspondente a esse comando relativo e passe no formato YYYY-MM-DD para as ferramentas.${pendingQuestionsContext}`;
 
   while (depth < maxDepth) {
     depth++;
@@ -862,6 +900,75 @@ REGRAS ADICIONAIS DE DATA:
           } else if (toolName === 'complete_boarding') {
             const boardingResult = await completeBoarding(toolArgs);
             resultString = JSON.stringify(boardingResult);
+          } else if (toolName === 'answer_client_question') {
+            try {
+              const { supabaseAdmin: supa } = await import('./supabase');
+              const { getAiResponse: aiResp } = await import('./claude');
+              const { sendWhatsAppMessage: sendMsg } = await import('./evolution');
+
+              // 1. Find the client conversation
+              const { data: clientConv } = await supa
+                .from('ia_conversations')
+                .select('*')
+                .eq('id', toolArgs.conversation_id)
+                .maybeSingle();
+
+              if (!clientConv) {
+                resultString = JSON.stringify({ error: 'Conversa do cliente não encontrada.' });
+              } else {
+                // 2. Fetch client message history
+                const { data: clientHistory } = await supa
+                  .from('ia_messages')
+                  .select('sender, content')
+                  .eq('conversation_id', clientConv.id)
+                  .order('created_at', { ascending: false })
+                  .limit(20);
+
+                const chronologicalHistory = (clientHistory || []).reverse();
+
+                // 3. Call Claude to formulate the response to the client
+                const clientResponse = await aiResp(
+                  clientConv.id,
+                  chronologicalHistory,
+                  clientConv.contact_name,
+                  clientConv.contact_phone,
+                  toolArgs.answer
+                );
+
+                if (clientResponse && clientResponse.trim()) {
+                  // 4. Send to client
+                  await sendMsg(clientConv.contact_phone, clientResponse);
+
+                  // 5. Save AI response in DB
+                  await supa
+                    .from('ia_messages')
+                    .insert({
+                      conversation_id: clientConv.id,
+                      sender: 'IA',
+                      content: clientResponse
+                    });
+
+                  // 6. Clear pending status
+                  await supa
+                    .from('ia_conversations')
+                    .update({
+                      pending_owners_message_id: null,
+                      pending_owners_question: null
+                    })
+                    .eq('id', clientConv.id);
+
+                  resultString = JSON.stringify({
+                    success: true,
+                    message: `Resposta enviada com sucesso para ${clientConv.contact_name} (${clientConv.contact_phone}).`
+                  });
+                } else {
+                  resultString = JSON.stringify({ error: 'Não foi possível formular a resposta para o cliente.' });
+                }
+              }
+            } catch (answerError: any) {
+              console.error(`[Claude Owners Group] Error answering client question:`, answerError);
+              resultString = JSON.stringify({ error: answerError.message || 'Erro ao responder pergunta do cliente.' });
+            }
           } else {
             resultString = JSON.stringify({ error: `Tool ${toolName} not found` });
           }

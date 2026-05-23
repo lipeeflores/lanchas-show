@@ -325,7 +325,22 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
 
             // Call Claude using the new getOwnersGroupResponse function
             const { getOwnersGroupResponse } = await import('./claude');
-            const aiResponseText = await getOwnersGroupResponse(chronologicalGroupHistory, mediaBase64, mediaMimetype);
+
+            // Fetch pending client questions that were escalated to this group
+            const { data: pendingConvs } = await supabaseAdmin
+              .from('ia_conversations')
+              .select('id, contact_name, contact_phone, pending_owners_question')
+              .not('pending_owners_message_id', 'is', null)
+              .not('pending_owners_question', 'is', null);
+
+            const pendingQuestions = (pendingConvs || []).map(c => ({
+              conversation_id: c.id,
+              client_name: c.contact_name || 'Desconhecido',
+              client_phone: c.contact_phone || 'Desconhecido',
+              question: c.pending_owners_question || ''
+            }));
+
+            const aiResponseText = await getOwnersGroupResponse(chronologicalGroupHistory, mediaBase64, mediaMimetype, pendingQuestions);
 
             if (aiResponseText && aiResponseText.trim()) {
               // Send response to the owners' group
