@@ -42,10 +42,18 @@ export default function FinancialDashboard() {
     const monthly: Record<string, {month: string, receita: number, despesa: number}> = {};
     // Calculate full monthly history for the Area Chart
     allResData.forEach(r => {
+        // Ignora bloqueios, cancelados e no-shows
+        if (r.status === 'BLOCKED' || r.status === 'CANCELLED' || r.status === 'NO_SHOW') return;
+
         const b = r.boats;
         if(!b) return;
-        const opCost = Number(b.original_rate || 0);
-        const d = new Date(r.created_at);
+
+        // Despesas operacionais e custos de saída só existem de fato ao finalizar o passeio (status COMPLETED)
+        const opCost = r.status === 'COMPLETED' ? Number(b.original_rate || 0) : 0;
+        const partnerCost = r.status === 'COMPLETED' ? Number(b.partner_net_value || 0) : 0;
+
+        // Agrupa por data do passeio (start_date) pois é a competência do serviço executado
+        const d = new Date(r.start_date || r.created_at);
         const mk = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
         const ml = d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' });
         if(!monthly[mk]) monthly[mk] = { month: ml, receita: 0, despesa: 0 };
@@ -54,7 +62,7 @@ export default function FinancialDashboard() {
           monthly[mk].receita += Number(r.total_price);
           monthly[mk].despesa += opCost;
         } else {
-          const diff = Number(r.total_price) - Number(b.partner_net_value || 0) - opCost;
+          const diff = Number(r.total_price) - partnerCost - opCost;
           monthly[mk].receita += diff;
           monthly[mk].despesa += opCost;
         }
@@ -83,11 +91,17 @@ export default function FinancialDashboard() {
     let de = 0;
 
     resData.forEach(r => {
+        // Ignora bloqueios, cancelados e no-shows
+        if (r.status === 'BLOCKED' || r.status === 'CANCELLED' || r.status === 'NO_SHOW') return;
+
         const b = r.boats;
         if(!b) return;
         if(!boatCount[b.id]) boatCount[b.id] = { name: b.name, rentals: 0, rev: 0 };
         boatCount[b.id].rentals += 1;
-        const opCost = Number(b.original_rate || 0);
+
+        // Despesas operacionais e custos de saída só existem de fato ao finalizar o passeio (status COMPLETED)
+        const opCost = r.status === 'COMPLETED' ? Number(b.original_rate || 0) : 0;
+        const partnerCost = r.status === 'COMPLETED' ? Number(b.partner_net_value || 0) : 0;
 
         // Competence (DRE) totals
         if(b.owner_type === 'OWN') {
@@ -95,7 +109,7 @@ export default function FinancialDashboard() {
           cs += opCost;
           boatCount[b.id].rev += Number(r.total_price);
         } else {
-          const diff = Number(r.total_price) - Number(b.partner_net_value || 0) - opCost;
+          const diff = Number(r.total_price) - partnerCost - opCost;
           lp += diff;
           boatCount[b.id].rev += diff;
         }
@@ -110,18 +124,18 @@ export default function FinancialDashboard() {
               type: 'INCOME',
               amount: Number(r.total_price),
               description: `[RESERVA] (Retroativo) ${b.name} — ${clientName}`,
-              created_at: r.created_at
+              created_at: r.start_date || r.created_at
             });
         }
 
-        // Add synthetic departure cost
-        if(opCost > 0) {
+        // Add synthetic departure cost ONLY if completed
+        if(r.status === 'COMPLETED' && opCost > 0) {
           ledger.push({
             id: 'cost-' + r.id,
             type: 'EXPENSE',
             amount: opCost,
             description: `Custo de Saída ${b.name} — ${clientName}`,
-            created_at: r.created_at
+            created_at: r.start_date || r.created_at
           });
         }
     });
