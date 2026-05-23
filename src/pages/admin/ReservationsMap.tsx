@@ -158,7 +158,7 @@ export default function ReservationsMap() {
       alert("Por favor, selecione uma embarcação.");
       return;
     }
-    if (!formData.customer_id && (!formData.customer_name || !formData.customer_phone)) {
+    if (formData.status !== 'BLOCKED' && !formData.customer_id && (!formData.customer_name || !formData.customer_phone)) {
       alert("Por favor, selecione um cliente ou preencha nome e telefone para cadastrar um novo.");
       return;
     }
@@ -166,21 +166,59 @@ export default function ReservationsMap() {
 
     let finalCustomerId = formData.customer_id;
     
-    // If no existing customer selected, create a new one
-    if (!finalCustomerId) {
-      const { data: newCustomer, error: customerError } = await supabase.from('customers').insert([{
-        full_name: formData.customer_name,
-        phone: formData.customer_phone
-      }]).select().single();
-      
-      if (customerError) {
-        console.error("Erro ao criar cliente:", customerError.message);
-        alert("Erro ao criar cadastro do cliente.");
-        setIsSaving(false);
-        return;
+    // If status is BLOCKED and no client is specified, map to a default placeholder customer
+    if (formData.status === 'BLOCKED') {
+      if (!finalCustomerId && !formData.customer_name) {
+        const blockCust = allCustomers.find(c => c.full_name === 'Bloqueio / Manutenção');
+        if (blockCust) {
+          finalCustomerId = blockCust.id;
+        } else {
+          const { data: newCustomer, error: customerError } = await supabase.from('customers').insert([{
+            full_name: 'Bloqueio / Manutenção',
+            phone: '00000000000'
+          }]).select().single();
+          
+          if (customerError) {
+            console.error("Erro ao criar cliente para bloqueio:", customerError.message);
+            alert("Erro ao criar cadastro de bloqueio: " + customerError.message);
+            setIsSaving(false);
+            return;
+          }
+          finalCustomerId = newCustomer.id;
+          setAllCustomers(prev => [...prev, newCustomer]);
+        }
+      } else if (!finalCustomerId) {
+        const { data: newCustomer, error: customerError } = await supabase.from('customers').insert([{
+          full_name: formData.customer_name || 'Bloqueio / Manutenção',
+          phone: formData.customer_phone || '00000000000'
+        }]).select().single();
+        
+        if (customerError) {
+          console.error("Erro ao criar cliente:", customerError.message);
+          alert("Erro ao criar cadastro do cliente.");
+          setIsSaving(false);
+          return;
+        }
+        finalCustomerId = newCustomer.id;
+        setAllCustomers(prev => [...prev, newCustomer]);
       }
-      finalCustomerId = newCustomer.id;
-      setAllCustomers(prev => [...prev, newCustomer]);
+    } else {
+      // If no existing customer selected, create a new one
+      if (!finalCustomerId) {
+        const { data: newCustomer, error: customerError } = await supabase.from('customers').insert([{
+          full_name: formData.customer_name,
+          phone: formData.customer_phone
+        }]).select().single();
+        
+        if (customerError) {
+          console.error("Erro ao criar cliente:", customerError.message);
+          alert("Erro ao criar cadastro do cliente.");
+          setIsSaving(false);
+          return;
+        }
+        finalCustomerId = newCustomer.id;
+        setAllCustomers(prev => [...prev, newCustomer]);
+      }
     }
 
     const matValue = formData.floating_mat === 'paid' ? 300 : 0;
@@ -560,7 +598,7 @@ export default function ReservationsMap() {
                         <label className="text-[10px] text-gray-500 uppercase font-bold mb-1.5 block">Nome do Cliente</label>
                         <input 
                           type="text"
-                          required
+                          required={formData.status !== 'BLOCKED'}
                           value={formData.customer_name} 
                           onChange={e => {
                             setFormData({...formData, customer_name: e.target.value, customer_id: ''});
@@ -625,7 +663,7 @@ export default function ReservationsMap() {
                         <label className="text-[10px] text-gray-500 uppercase font-bold mb-1.5 block">Telefone (WhatsApp)</label>
                         <input 
                           type="text"
-                          required
+                          required={formData.status !== 'BLOCKED'}
                           value={formData.customer_phone} 
                           onChange={e => {
                             setFormData({...formData, customer_phone: e.target.value, customer_id: ''});
@@ -976,7 +1014,7 @@ export default function ReservationsMap() {
                    <button type="button" onClick={() => setIsModalOpen(false)} className="text-gray-500 hover:text-white font-bold text-sm uppercase">Cancelar</button>
                    <button 
                     type="submit"
-                    disabled={isSaving || (!formData.customer_id && (!formData.customer_name || !formData.customer_phone))}
+                    disabled={isSaving || (formData.status !== 'BLOCKED' && !formData.customer_id && (!formData.customer_name || !formData.customer_phone))}
                     className="bg-yellow-500 hover:bg-yellow-400 disabled:opacity-30 text-slate-900 font-black px-10 py-4 rounded-2xl transition-all shadow-[0_0_30px_rgba(234,179,8,0.2)] flex items-center gap-3"
                    >
                      {isSaving ? <Loader2 className="w-6 h-6 animate-spin"/> : <Check className="w-6 h-6"/>}
