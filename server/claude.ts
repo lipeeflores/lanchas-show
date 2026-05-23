@@ -615,7 +615,7 @@ const OWNERS_TOOLS: any[] = [
   },
   {
     name: 'create_pending_reservation',
-    description: 'Cria um bloqueio ou reserva na agenda com status PENDING no sistema.',
+    description: 'Cria um bloqueio ou reserva na agenda do sistema.',
     input_schema: {
       type: 'object',
       properties: {
@@ -655,9 +655,13 @@ const OWNERS_TOOLS: any[] = [
         total_price: {
           type: 'number',
           description: 'O valor total cobrado.'
+        },
+        status: {
+          type: 'string',
+          description: 'O status da reserva (PENDING para aluguel manual, BLOCKED para bloqueio/uso próprio do proprietário).'
         }
       },
-      required: ['phone', 'name', 'boat_id', 'date', 'boarding_point', 'destination', 'passenger_count', 'floating_mat_status', 'total_price']
+      required: ['boat_id', 'date']
     }
   },
   {
@@ -684,17 +688,23 @@ Seu objetivo é ajudar os proprietários a gerenciar a agenda e enviar avisos em
 AÇÕES SUPORTADAS:
 
 1. BLOQUEIO / RESERVA MANUAL POR PARTE DOS DONOS:
-   Se algum dono disser que alugou um barco ou que quer bloquear (ex: "aluguei a Phantom para sábado", "bloqueia a Tecnomarine amanhã"), você deve:
-   - Identificar a lancha e a data.
-   - Solicitar educadamente no grupo os dados que faltam para o cadastro da reserva na agenda:
-     1. Nome completo do cliente
-     2. Telefone do cliente (WhatsApp)
-     3. Tapete flutuante (contratado pago R$300, cortesia ou não incluso)
-     4. Horas extras (se houver)
-     5. Valor total cobrado e valor do sinal recebido
-     6. Se o cliente já assinou o termo/contrato
-   - Assim que eles fornecerem as informações, chame a tool 'create_pending_reservation' para salvar no banco de dados.
-   - Confirme no grupo que a lancha foi bloqueada na agenda para aquela data.
+   - CASO DE USO PRÓPRIO / BLOQUEIO (se disserem "vou usar", "vou navegar", "bloqueia a Phantom para mim amanhã", "estou usando", "vou sair com ela"):
+     * Identifique a lancha e a data do bloqueio.
+     * NÃO solicite NENHUM dado adicional (como nome, telefone, tapete, valor, etc.).
+     * Chame IMEDIATAMENTE a ferramenta 'create_pending_reservation' passando apenas 'boat_id', 'date' e 'status': 'BLOCKED'. Deixe os outros campos vazios ou omitidos (eles serão preenchidos automaticamente com o cliente padrão 'Bloqueio / Manutenção').
+     * Confirme imediatamente no grupo que o barco está bloqueado para uso dele na data informada.
+
+   - CASO DE ALUGUEL PARA CLIENTES (se disserem explicitamente "aluguei", "fechei o barco" ou indicarem aluguel para terceiros):
+     * Identifique a lancha e a data.
+     * Solicite educadamente no grupo os dados que faltam para o cadastro:
+       1. Nome completo do cliente
+       2. Telefone do cliente (WhatsApp)
+       3. Tapete flutuante (contratado pago R$300, cortesia ou não incluso)
+       4. Horas extras (se houver)
+       5. Valor total cobrado e valor do sinal recebido
+       6. Se o cliente já assinou o termo/contrato
+     * Se eles fornecerem os dados, chame a ferramenta 'create_pending_reservation' com os dados informados e 'status': 'PENDING'.
+     * Se eles NÃO passarem essas informações ou se recusarem (ex: "não tenho", "depois te passo", "bloqueia aí logo"), você deve responder educadamente informando que, por ser um aluguel para cliente, sem esses dados mínimos você NÃO consegue colocar na agenda automaticamente, e que eles precisarão acessar o sistema e preencher manualmente. Não chame a ferramenta 'create_pending_reservation' nesse caso de recusa.
 
 2. DISPARAR PROMOÇÕES (BROADCAST):
    Se algum dono solicitar o envio de uma promoção ou mensagem para os clientes em negociação (ex: "manda promoção de 10% de desconto para fechar hoje para quem está negociando"), você deve:
@@ -729,10 +739,22 @@ export async function getOwnersGroupResponse(
   let depth = 0;
   const maxDepth = 5;
 
+  const localStr = new Date().toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' }); // "YYYY-MM-DD HH:MM:SS"
+  const currentDate = localStr.substring(0, 10);
+
+  const dynamicOwnersSystemPrompt = `${OWNERS_SYSTEM_PROMPT}
+
+DADOS DO SISTEMA E DATA ATUAL:
+- Data de Hoje (Fuso de Santa Catarina): ${currentDate}
+
+REGRAS ADICIONAIS DE DATA:
+- Ao analisar comandos dos donos como "segunda-feira dia 25" ou "amanhã", tome como referência que a data de hoje é ${currentDate}.
+- Calcule a data correta correspondente a esse comando relativo e passe no formato YYYY-MM-DD para as ferramentas.`;
+
   while (depth < maxDepth) {
     depth++;
     console.log(`[Claude Owners Group] Calling messages loop. Depth: ${depth}`);
-    const response = await callClaudeAPI(OWNERS_SYSTEM_PROMPT, messages, OWNERS_TOOLS);
+    const response = await callClaudeAPI(dynamicOwnersSystemPrompt, messages, OWNERS_TOOLS);
 
     messages.push({
       role: 'assistant',

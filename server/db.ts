@@ -263,22 +263,32 @@ export async function updateConversationTargetDate(conversationId: string, dateS
  * Creates a pending reservation in the system.
  */
 export async function createPendingReservation(data: {
-  phone: string;
-  name: string;
+  phone?: string;
+  name?: string;
   boat_id: string;
   date: string; // YYYY-MM-DD
-  boarding_point: string;
-  destination: string;
-  passenger_count: number;
-  floating_mat_status: 'none' | 'paid' | 'courtesy';
-  total_price: number;
+  boarding_point?: string;
+  destination?: string;
+  passenger_count?: number;
+  floating_mat_status?: 'none' | 'paid' | 'courtesy';
+  total_price?: number;
+  status?: string;
 }) {
   try {
+    const finalPhone = data.phone || '00000000000';
+    const finalName = data.name || 'Bloqueio / Manutenção';
+    const finalBoardingPoint = data.boarding_point || 'Porto Belo';
+    const finalDestination = data.destination || 'Caixa d\'Aço';
+    const finalPassengerCount = data.passenger_count || 1;
+    const finalFloatingMat = data.floating_mat_status || 'none';
+    const finalTotalPrice = data.total_price || 0;
+    const finalStatus = data.status || 'PENDING';
+
     // 1. Resolve or create customer
     let { data: customer, error: custError } = await supabaseAdmin
       .from('customers')
       .select('id')
-      .eq('phone', data.phone)
+      .eq('phone', finalPhone)
       .maybeSingle();
 
     if (custError) throw custError;
@@ -287,8 +297,8 @@ export async function createPendingReservation(data: {
       const { data: newCust, error: createCustError } = await supabaseAdmin
         .from('customers')
         .insert({
-          full_name: data.name,
-          phone: data.phone
+          full_name: finalName,
+          phone: finalPhone
         })
         .select('id')
         .single();
@@ -299,9 +309,9 @@ export async function createPendingReservation(data: {
 
     // Map floating_mat_status to tapete_status
     let tapeteStatus = 'disponivel';
-    if (data.floating_mat_status === 'paid') {
+    if (finalFloatingMat === 'paid') {
       tapeteStatus = 'alugado';
-    } else if (data.floating_mat_status === 'courtesy') {
+    } else if (finalFloatingMat === 'courtesy') {
       tapeteStatus = 'cortesia';
     }
 
@@ -317,13 +327,13 @@ export async function createPendingReservation(data: {
         customer_id: customer.id,
         start_date: startDate,
         end_date: endDate,
-        status: 'PENDING',
-        total_price: data.total_price,
-        total_reservation_value: data.total_price,
-        passenger_count: data.passenger_count,
-        boarding_point: data.boarding_point,
-        destination: data.destination,
-        floating_mat_status: data.floating_mat_status,
+        status: finalStatus,
+        total_price: finalTotalPrice,
+        total_reservation_value: finalTotalPrice,
+        passenger_count: finalPassengerCount,
+        boarding_point: finalBoardingPoint,
+        destination: finalDestination,
+        floating_mat_status: finalFloatingMat,
         tapete_status: tapeteStatus
       })
       .select('*, boats(name)')
@@ -331,11 +341,11 @@ export async function createPendingReservation(data: {
 
     if (resError) throw resError;
 
-    console.log(`[DB Helper] Created pending reservation for client ${data.name} on boat ${(reservation as any).boats?.name}`);
+    console.log(`[DB Helper] Created reservation (${finalStatus}) for client ${finalName} on boat ${(reservation as any).boats?.name}`);
     return { success: true, reservation };
   } catch (error: any) {
-    console.error(`[DB Helper] Error creating pending reservation:`, error);
-    return { error: error.message || 'Erro ao criar reserva pendente.' };
+    console.error(`[DB Helper] Error creating reservation:`, error);
+    return { error: error.message || 'Erro ao criar reserva.' };
   }
 }
 
