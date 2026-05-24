@@ -393,16 +393,29 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
   console.log(`[Webhook] Event: ${event} | Phone: ${phone} | fromMe: ${fromMe} | Msg: "${textContent.substring(0, 30)}..."`);
 
   if (fromMe) {
-    // Process outgoing messages (messages sent from our side)
+    // Process outgoing messages (messages sent from our side).
+    // We need to save genuine manual admin messages while skipping echoes of AI-generated messages.
     messageQueue.enqueue(phone, async () => {
       try {
-        let { data: conversation } = await supabaseAdmin
+        // Build phone variants to handle Brazil DDI "55" inconsistencies.
+        // Evolution API may echo back the number with or without the country code,
+        // causing a mismatch with how the conversation was originally stored.
+        const phoneVariants: string[] = [phone];
+        if (phone.startsWith('55') && phone.length >= 12) {
+          phoneVariants.push(phone.substring(2)); // also try without DDI
+        } else if (!phone.startsWith('55') && phone.length >= 10) {
+          phoneVariants.push('55' + phone); // also try with DDI
+        }
+
+        // Fetch ALL conversations for any variant of this phone number
+        const { data: allConvs } = await supabaseAdmin
           .from('ia_conversations')
           .select('id')
-          .eq('contact_phone', phone)
-          .maybeSingle();
+          .in('contact_phone', phoneVariants)
+          .order('created_at', { ascending: false }); // most recent first
 
-        if (!conversation) {
+        if (!allConvs || allConvs.length === 0) {
+          // No conversation exists at all — create one and save as ADMIN
           const { data: newConv } = await supabaseAdmin
             .from('ia_conversations')
             .insert({
@@ -415,32 +428,44 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
             })
             .select('id')
             .single();
-          conversation = newConv;
-        }
-
-        if (conversation) {
-          const { data: existing } = await supabaseAdmin
-            .from('ia_messages')
-            .select('id')
-            .eq('conversation_id', conversation.id)
-            .eq('content', textContent)
-            .limit(1);
-
-          if (existing && existing.length > 0) {
-            return;
-          }
-
-          await supabaseAdmin
-            .from('ia_messages')
-            .insert({
-              conversation_id: conversation.id,
+          if (newConv) {
+            await supabaseAdmin.from('ia_messages').insert({
+              conversation_id: newConv.id,
               sender: 'ADMIN',
               content: textContent
             });
-          console.log(`[Webhook] Outgoing message saved as ADMIN.`);
+            console.log('[Webhook] Outgoing message saved as ADMIN (new conversation).');
+          }
+          return;
         }
+
+        const convIds = allConvs.map(c => c.id);
+
+        // Check if this exact message content already exists in ANY of the conversations
+        // for this phone. This is the dedup check — AI responses are saved by the AI handler
+        // before this fromMe webhook fires, so they should always be found here.
+        const { data: existing } = await supabaseAdmin
+          .from('ia_messages')
+          .select('id')
+          .in('conversation_id', convIds)
+          .eq('content', textContent)
+          .limit(1);
+
+        if (existing && existing.length > 0) {
+          // Message was already saved (by the AI handler or a previous fromMe). Skip.
+          return;
+        }
+
+        // Not found in any conversation — it's a genuine manual admin message.
+        // Save it to the most recently created conversation.
+        await supabaseAdmin.from('ia_messages').insert({
+          conversation_id: convIds[0],
+          sender: 'ADMIN',
+          content: textContent
+        });
+        console.log('[Webhook] Outgoing message saved as ADMIN.');
       } catch (error) {
-        console.error(`[Webhook] Error saving outgoing message:`, error);
+        console.error('[Webhook] Error saving outgoing message:', error);
       }
     });
   } else {
