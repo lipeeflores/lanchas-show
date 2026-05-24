@@ -4,7 +4,7 @@ import path from 'path';
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 const apiUrl = process.env.EVOLUTION_API_URL || 'http://localhost:8080';
-const apiKey = process.env.EVOLUTION_API_KEY || '429643a637c6883135f28a8d193d1e6';
+const apiKey = process.env.EVOLUTION_API_KEY || '';
 const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'lanchas_show';
 
 export interface EvolutionConnectionState {
@@ -239,6 +239,17 @@ export async function sendWhatsAppMedia(toPhone: string, base64Data: string, mim
     console.error(`[Evolution] Error sending media to ${toPhone}:`, error);
     throw error;
   }
+}
+
+/**
+ * Simulates human typing: sends composing presence, waits a realistic delay, then sends the message.
+ * Use this instead of sendWhatsAppMessage for all automated/scheduled messages.
+ */
+export async function simulateTypingAndSend(toPhone: string, text: string): Promise<void> {
+  const delayMs = Math.min(Math.max(1000 + text.length * 25, 1500), 6000);
+  await sendPresence(toPhone, 'composing');
+  await new Promise(resolve => setTimeout(resolve, delayMs));
+  await sendWhatsAppMessage(toPhone, text);
 }
 
 /**

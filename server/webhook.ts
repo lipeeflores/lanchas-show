@@ -1,11 +1,11 @@
 import { Request, Response } from 'express';
 import { supabaseAdmin } from './supabase';
-import { sendWhatsAppMessage, sendPresence } from './evolution';
+import { sendWhatsAppMessage, sendPresence, simulateTypingAndSend } from './evolution';
 import { getAiResponse } from './claude';
 import { messageQueue } from './queue';
 
 const evolutionApiUrl = process.env.EVOLUTION_API_URL || 'http://localhost:8080';
-const evolutionApiKey = process.env.EVOLUTION_API_KEY || '429643a637c6883135f28a8d193d1e6';
+const evolutionApiKey = process.env.EVOLUTION_API_KEY || '';
 const evolutionInstanceName = process.env.EVOLUTION_INSTANCE_NAME || 'lanchas_show';
 
 // Map to store debouncing timeouts per phone number
@@ -151,9 +151,13 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
   const phone = remoteJid.split('@')[0];
   const pushName = data.pushName || phone;
 
-  // Handle incoming media: Audio message transcription via Whisper
+  // Handle incoming media: Audio → Whisper transcription; Image → Claude Vision
   let textContent = '';
+  let clientImageBase64: string | undefined;
+  let clientImageMimetype: string | undefined;
+
   const isAudio = data.message?.audioMessage || data.message?.pttMessage;
+  const isImage = !isAudio && data.message?.imageMessage;
 
   if (isAudio) {
     console.log(`[Webhook] Audio message detected from ${phone}. Downloading for Whisper transcription...`);
@@ -168,6 +172,23 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
     } catch (error) {
       console.error(`[Webhook] Error in Whisper transcription:`, error);
       textContent = '[Áudio não transcrito - erro na transcrição]';
+    }
+  } else if (isImage) {
+    console.log(`[Webhook] Image message detected from ${phone}. Downloading for Claude Vision...`);
+    try {
+      const mediaInfo = await getBase64Media(data.key.id);
+      if (mediaInfo?.base64) {
+        clientImageBase64 = mediaInfo.base64;
+        clientImageMimetype = mediaInfo.mimetype;
+        const caption = data.message.imageMessage?.caption || '';
+        textContent = caption ? `[Foto] ${caption}` : '[Foto]';
+        console.log(`[Webhook] Image downloaded for Vision. Caption: "${caption}"`);
+      } else {
+        textContent = '[Foto]';
+      }
+    } catch (error) {
+      console.error(`[Webhook] Error downloading image:`, error);
+      textContent = '[Foto]';
     }
   } else {
     textContent = extractMessageText(data.message);
@@ -230,8 +251,8 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
               );
 
               if (aiResponseText && aiResponseText.trim()) {
-                // Send to client
-                await sendWhatsAppMessage(pendingConv.contact_phone, aiResponseText);
+                // Send to client with typing simulation
+                await simulateTypingAndSend(pendingConv.contact_phone, aiResponseText);
 
                 // Save AI response in DB
                 await supabaseAdmin
@@ -343,8 +364,8 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
             const aiResponseText = await getOwnersGroupResponse(chronologicalGroupHistory, mediaBase64, mediaMimetype, pendingQuestions);
 
             if (aiResponseText && aiResponseText.trim()) {
-              // Send response to the owners' group
-              await sendWhatsAppMessage(remoteJid, aiResponseText);
+              // Send response to the owners' group with typing simulation
+              await simulateTypingAndSend(remoteJid, aiResponseText);
 
               // Save response in DB
               await supabaseAdmin
@@ -505,12 +526,15 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
               // Send "composing" presence status to WhatsApp immediately when beginning generation
               await sendPresence(phone, 'composing');
 
-              // Call Claude to formulate response
+              // Call Claude to formulate response (pass image if any for Vision)
               const aiResponseText = await getAiResponse(
                 currentConv.id,
                 chronologicalHistory,
                 currentConv.contact_name || pushName || '',
-                currentConv.contact_phone || phone || ''
+                currentConv.contact_phone || phone || '',
+                undefined,
+                clientImageBase64,
+                clientImageMimetype
               );
 
               if (!aiResponseText || !aiResponseText.trim()) {

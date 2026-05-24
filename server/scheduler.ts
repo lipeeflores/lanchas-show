@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import { supabaseAdmin } from './supabase';
-import { sendWhatsAppMessage } from './evolution';
+import { simulateTypingAndSend, sendWhatsAppMessage } from './evolution';
 
 const FOUR_HOURS = 4 * 60 * 60 * 1000;
 const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
@@ -200,14 +200,14 @@ export async function checkFollowUps(): Promise<void> {
 }
 
 /**
- * Sends the follow-up message via Evolution API and registers it in the DB.
+ * Sends the follow-up message with typing simulation and registers it in the DB.
  */
 async function sendFollowUp(conversationId: string, phone: string, text: string): Promise<void> {
   console.log(`[Scheduler] Sending follow-up to ${phone}: "${text.substring(0, 30)}..."`);
-  
+
   try {
-    // 1. Send via WhatsApp
-    await sendWhatsAppMessage(phone, text);
+    // 1. Send via WhatsApp with typing indicator + delay
+    await simulateTypingAndSend(phone, text);
 
     // 2. Save in database
     const { error } = await supabaseAdmin
@@ -345,9 +345,9 @@ export async function checkPostTrips(): Promise<void> {
 
         console.log(`[Scheduler] Processing completed reservation ${res.id} for client phone ${phone}`);
 
-        // Send WhatsApp message
+        // Send WhatsApp message with typing simulation
         const text = `Como foi o dia a bordo? ✨\nSeu feedback é muito importante pra gente!\n\n⭐ Avalie no Google:\n${googleReviewUrl}\n\n🛥️ Avalie o barco e o marinheiro:\n${siteReviewUrl}`;
-        await sendWhatsAppMessage(phone, text);
+        await simulateTypingAndSend(phone, text);
 
         // Save in message history
         await supabaseAdmin
@@ -500,8 +500,8 @@ export async function checkBoardingReminder(): Promise<void> {
     });
     reminderText += `\nJá foi realizado o embarque? Por favor, respondam aqui no grupo confirmando para que eu possa atualizar a agenda (ex: *"Embarque feito da ${boatNames[0]}"* ou *"embarcou"*).`;
 
-    // 4. Send message
-    await sendWhatsAppMessage(ownersGroupJid, reminderText);
+    // 4. Send message with typing simulation
+    await simulateTypingAndSend(ownersGroupJid, reminderText);
 
     // 5. Register in DB
     if (groupConversations) {

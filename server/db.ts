@@ -563,9 +563,15 @@ export async function broadcastPromotion(customMessage: string, mediaBase64?: st
 }
 
 /**
- * Escalates a client's question to the owners' group, storing the message ID to map the future reply.
+ * Escalates a client's question (or payment receipt) to the owners' group.
+ * Optionally forwards an image (e.g., PIX receipt) alongside the text message.
  */
-export async function askOwnersGroup(conversationId: string, question: string): Promise<any> {
+export async function askOwnersGroup(
+  conversationId: string,
+  question: string,
+  imageBase64?: string,
+  imageMimetype?: string
+): Promise<any> {
   const ownersGroupJid = process.env.OWNERS_GROUP_JID;
   if (!ownersGroupJid) {
     console.warn('[DB Helper] OWNERS_GROUP_JID is not defined in env. Cannot escalate question.');
@@ -587,8 +593,21 @@ export async function askOwnersGroup(conversationId: string, question: string): 
 
     const messageText = `❓ *DÚVIDA DE CLIENTE*\n\n*Cliente:* ${clientName} (${clientPhone})\n*Dúvida:* ${question}\n\n_Para responder, responda (Marcar/Citar) esta mensagem com a resposta que deseja enviar ao cliente._`;
 
-    const { sendWhatsAppMessage } = await import('./evolution');
+    const { sendWhatsAppMessage, sendWhatsAppMedia } = await import('./evolution');
     const response = await sendWhatsAppMessage(ownersGroupJid, messageText);
+
+    // If an image was provided (e.g. PIX receipt), forward it to the group right after the text
+    if (imageBase64 && imageMimetype) {
+      try {
+        const supportedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+        if (supportedTypes.includes(imageMimetype)) {
+          const cleanBase64 = imageBase64.includes(';base64,') ? imageBase64.split(';base64,')[1] : imageBase64;
+          await sendWhatsAppMedia(ownersGroupJid, cleanBase64, imageMimetype, `📎 Comprovante enviado pelo cliente ${clientName}`);
+        }
+      } catch (mediaErr) {
+        console.warn('[DB Helper] Failed to forward receipt image to owners group:', mediaErr);
+      }
+    }
 
     const messageId = response?.key?.id || response?.messageId || '';
 

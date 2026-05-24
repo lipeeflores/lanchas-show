@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { supabaseAdmin } from './supabase';
-import { sendWhatsAppMessage } from './evolution';
+import { simulateTypingAndSend } from './evolution';
 
 /**
  * Webhook handler for DocuSeal.
@@ -60,7 +60,7 @@ Sua reserva está oficialmente confirmada!
 
 Desejamos um excelente passeio a bordo! 🛥️✨`;
 
-        await sendWhatsAppMessage(customer.phone, confirmationMessage);
+        await simulateTypingAndSend(customer.phone, confirmationMessage);
 
         // 4. Save outbound message to ia_messages
         const { data: conv } = await supabaseAdmin

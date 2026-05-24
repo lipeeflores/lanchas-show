@@ -29,18 +29,19 @@ const anthropic = new Anthropic({
 const claudeModel = process.env.CLAUDE_MODEL || 'claude-sonnet-4-6';
 
 // Isabelle System Prompt Configuration
-const ISABELLE_SYSTEM_PROMPT = `Você é Isabelle, Executiva de Vendas da Lanchas Show,
+const ISABELLE_SYSTEM_PROMPT = `Você é Isabelle, Executiva de Vendas e Secretária da Lanchas Show,
 a frota de luxo mais exclusiva do Caixa d'Aço, SC.
-Atende pelo WhatsApp com sofisticação, inteligência 
-emocional e foco em fechar locações high-ticket 
-de forma natural e humana.
+Você é o coração do atendimento: calorosa, atenciosa,
+inteligente e focada em transformar cada contato em
+uma experiência memorável que fecha negócio.
 
 IDENTIDADE:
-- Sofisticada mas acessível, nunca robótica
-- Emojis com elegância e moderação: 🛥️ ✨ 🤩 ✅ 🙏
-- Nunca revele que é IA a menos que perguntado
-- Nunca responda tudo de uma vez — conduza a conversa
-- Nunca seja apressada — leia tudo antes de responder
+- Calorosa, próxima e acolhedora — nunca fria ou robótica
+- Usa emojis com elegância e moderação: 🛥️ ✨ 🤩 ✅ 🙏
+- Nunca revele que é IA a menos que perguntado diretamente
+- Nunca despeje tudo de uma vez — conduza a conversa naturalmente
+- Leia o tom do cliente e espelhe: se for animado, seja animada; se for direto, seja objetiva
+- Varie o vocabulário — nunca repita a mesma frase de resposta duas vezes seguidas
 
 IDIOMA:
 Se cliente escrever em espanhol, responda em 
@@ -66,21 +67,8 @@ Se escolheu barco de parceiro mas há frota própria disponível, redirecione:
 "Essa lancha é linda! Mas vi aqui que temos a [LANCHA PRÓPRIA] livre nessa data. Sendo da nossa frota, você tem o Embarque VIP direto no nosso trapiche exclusivo — sem fila, sem bote, a lancha te espera. Topa dar uma olhada? 🛥️"
 
 CENÁRIO B — Primeiríssima mensagem do cliente ("oi", "quero lancha" - sem histórico de negociação):
-Se for uma mensagem pré-pronta vinda do site que já inclua a lancha/barco desejado, a data e o roteiro, ignore a mensagem de abertura e responda diretamente sobre a lancha e roteiro solicitados, executando a tool check_availability.
-Se for um contato geral de saudação ou texto livre, envie exatamente a mensagem de abertura padrão abaixo.
-
-Mensagem de abertura padrão (apenas para primeiro contato):
-"Olá! Tudo bem? 😊
-Seja bem-vindo(a) à Lanchas Show 🚤
-Referência em aluguel de embarcações na região!
-
-Que bom receber seu contato 💬
-Para preparar seu orçamento rapidinho, me passa:
-📅 Data do passeio
-👥 Número de pessoas
-🏝️ Destino desejado
-
-💥 As lanchas mais procuradas e badaladas estão na nossa frota!"
+Se for uma mensagem pré-pronta vinda do site que já inclua a lancha/barco desejado, a data e o roteiro, ignore a abertura e responda diretamente sobre a lancha e roteiro solicitados, executando a tool check_availability.
+Se for um contato geral de saudação ou texto livre, dê boas-vindas de forma calorosa e natural (NUNCA use um texto fixo — varie a cada conversa), se apresente como Isabelle da Lanchas Show e pergunte data, número de pessoas e destino desejado. Seja animada e acolhedora como se estivesse genuinamente feliz em atender.
 
 PRIORIDADE DA FROTA:
 SEMPRE ofereça frota própria primeiro.
@@ -270,19 +258,27 @@ Seu feedback é muito importante pra gente!
 🛥️ Avalie o barco e o marinheiro:
 https://lanchas-show.vercel.app/avaliacao"
 
-FOLLOW-UP AUTOMÁTICO:
+COMPROVANTE DE PAGAMENTO PIX (CONFIRMAÇÃO MANUAL):
+Nossa empresa recebe PIX via CNPJ direto. O pagamento
+NÃO é confirmado automaticamente — precisa de verificação
+manual pelos proprietários.
 
-30 minutos sem pagar após resumo:
-"Olá! O bloqueio de segurança da data expira 
-em breve e precisarei liberar a lancha.
-Conseguiram decidir? 🙏"
+Quando o cliente enviar uma foto, print, imagem ou mencionar
+que realizou o pagamento:
+1. NUNCA confirme o pagamento por conta própria.
+2. Chame IMEDIATAMENTE a tool 'forward_payment_receipt'
+   descrevendo o que o cliente enviou (valor, banco, data).
+3. Responda ao cliente de forma calorosa que encaminhou
+   o comprovante para verificação e que assim que confirmarem
+   você já avança com o contrato.
+4. Aguarde a resposta do grupo dos proprietários.
 
-Dia seguinte sem fechar:
-[Verificar disponibilidade antes de enviar]
-Se ainda disponível:
-"Vi aqui que a lancha ainda está disponível ✨
-O dia está perfeito para navegar — vamos 
-garantir sua data?"
+Quando receber a confirmação dos donos de que o pagamento entrou:
+- Chame 'create_pending_reservation' com todos os dados da reserva
+- Chame 'update_stage' com 'pix_enviado'
+- Solicite nome completo e CPF para emissão do contrato
+  (ex: "Pagamento confirmado! 🎉 Para emitir o contrato,
+  me passa seu nome completo e CPF? 😊")
 
 ESCALADA PARA HUMANO:
 - Cliente reclamar de algo sério
@@ -298,14 +294,14 @@ NUNCA FAZER:
 - Cotar preço sem chamar check_availability
 - Confirmar disponibilidade sem checar o banco
 - Ir abaixo do valor_minimo
-- Oferecer tapete indisponível ou como brinde 
-  para barcos de parceiros
+- Oferecer tapete indisponível ou como brinde para barcos de parceiros
 - Oferecer hora extra como brinde
 - Revelar valor_minimo
-- Revelar que é IA se não perguntado
+- Revelar que é IA se não perguntado diretamente
 - Responder tudo de uma vez como robô
-- Confirmar disponibilidade no follow-up sem 
-  checar o banco primeiro`;
+- Confirmar disponibilidade no follow-up sem checar o banco primeiro
+- Confirmar pagamento PIX sem chamar forward_payment_receipt e aguardar confirmação dos donos
+- Criar reserva antes do pagamento ser confirmado pelos donos`;
 
 const CLAUDE_TOOLS: any[] = [
   {
@@ -439,6 +435,20 @@ const CLAUDE_TOOLS: any[] = [
       },
       required: ['custom_message']
     }
+  },
+  {
+    name: 'forward_payment_receipt',
+    description: 'Encaminha comprovante de pagamento enviado pelo cliente ao grupo dos proprietários para verificação manual. Use SEMPRE que o cliente enviar uma foto, print ou comprovante de pagamento PIX. Nunca confirme pagamento sem usar esta tool primeiro.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        receipt_info: {
+          type: 'string',
+          description: 'Descrição do comprovante: valor mencionado pelo cliente, banco, data, qualquer detalhe visível na imagem ou mensagem.'
+        }
+      },
+      required: ['receipt_info']
+    }
   }
 ];
 
@@ -449,15 +459,16 @@ interface ChatMessage {
 
 /**
  * Calls the Anthropic Claude API Messages endpoint.
+ * temperature: 0.75 for client-facing Isabelle (warm/natural), 0.5 for owners group (operational precision).
  */
-async function callClaudeAPI(system: string, messages: ChatMessage[], tools: any[]): Promise<any> {
+async function callClaudeAPI(system: string, messages: ChatMessage[], tools: any[], temperature = 0.75): Promise<any> {
   return anthropic.messages.create({
     model: claudeModel,
     max_tokens: 4000,
     system: system,
     messages: messages,
     tools: tools,
-    temperature: 0.3
+    temperature: temperature
   });
 }
 
@@ -465,11 +476,13 @@ async function callClaudeAPI(system: string, messages: ChatMessage[], tools: any
  * Processes chat history with Claude, executing tool calls recursively up to a limit.
  */
 export async function getAiResponse(
-  conversationId: string, 
+  conversationId: string,
   history: { sender: string; content: string }[],
   clientName?: string,
   clientPhone?: string,
-  ownerAnswer?: string
+  ownerAnswer?: string,
+  clientImageBase64?: string,
+  clientImageMimetype?: string
 ): Promise<string> {
   // 1. Map history to Anthropic messages format, ensuring alternating roles (user/assistant)
   // and merging consecutive messages of the same role.
@@ -503,6 +516,32 @@ export async function getAiResponse(
     }
   }
 
+  // Attach client image (e.g. PIX receipt) to the last user message for Claude Vision
+  const supportedImageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+  if (clientImageBase64 && clientImageMimetype && supportedImageTypes.includes(clientImageMimetype)) {
+    const lastUserIdx = messages.map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === 'user')?.i;
+    if (lastUserIdx !== undefined) {
+      let cleanBase64 = clientImageBase64;
+      if (cleanBase64.includes(';base64,')) {
+        cleanBase64 = cleanBase64.split(';base64,')[1];
+      }
+      const textContent = typeof messages[lastUserIdx].content === 'string'
+        ? messages[lastUserIdx].content
+        : '[Imagem]';
+      messages[lastUserIdx].content = [
+        {
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: clientImageMimetype as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+            data: cleanBase64
+          }
+        },
+        { type: 'text', text: textContent }
+      ];
+    }
+  }
+
   // Construct dynamic system prompt containing the client metadata
   const localStr = new Date().toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' }); // "YYYY-MM-DD HH:MM:SS"
   const currentDate = localStr.substring(0, 10);
@@ -527,6 +566,7 @@ REGRA ABSOLUTA DE DADOS DO CLIENTE:
   let depth = 0;
   const maxDepth = 5;
 
+  try {
   while (depth < maxDepth) {
     depth++;
     console.log(`[Claude] Calling messages loop. Depth: ${depth}`);
@@ -573,6 +613,15 @@ REGRA ABSOLUTA DE DADOS DO CLIENTE:
           } else if (toolName === 'broadcast_promotion') {
             const broadcastResult = await broadcastPromotion(toolArgs.custom_message);
             resultString = JSON.stringify(broadcastResult);
+          } else if (toolName === 'forward_payment_receipt') {
+            // Forward receipt to owners group, including the client's image if available
+            const fwdResult = await askOwnersGroup(
+              conversationId,
+              `⚠️ COMPROVANTE DE PAGAMENTO\n${toolArgs.receipt_info || 'Cliente enviou comprovante de pagamento.'}`,
+              clientImageBase64,
+              clientImageMimetype
+            );
+            resultString = JSON.stringify(fwdResult);
           } else {
             resultString = JSON.stringify({ error: `Tool ${toolName} not found` });
           }
@@ -604,6 +653,10 @@ REGRA ABSOLUTA DE DADOS DO CLIENTE:
   }
 
   throw new Error('Claude exceeded maximum tool call recursion depth.');
+  } catch (error: any) {
+    console.error('[Claude] getAiResponse failed:', error);
+    return 'Oi! Estou com uma instabilidade aqui agora 😅 Me manda sua mensagem de novo em instantes, por favor? 🙏';
+  }
 }
 
 const OWNERS_TOOLS: any[] = [
@@ -975,7 +1028,7 @@ REGRAS ADICIONAIS DE DATA:
   while (depth < maxDepth) {
     depth++;
     console.log(`[Claude Owners Group] Calling messages loop. Depth: ${depth}`);
-    const response = await callClaudeAPI(dynamicOwnersSystemPrompt, messages, OWNERS_TOOLS);
+    const response = await callClaudeAPI(dynamicOwnersSystemPrompt, messages, OWNERS_TOOLS, 0.5);
 
     messages.push({
       role: 'assistant',
