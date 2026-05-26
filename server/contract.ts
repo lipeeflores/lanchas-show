@@ -1,6 +1,6 @@
 import puppeteer from 'puppeteer';
 import { supabaseAdmin } from './supabase';
-import { sendWhatsAppMessage } from './evolution';
+import { simulateTypingAndSend } from './evolution';
 
 /**
  * Generates a PDF contract from the database HTML template, uploads it to Supabase Storage,
@@ -133,7 +133,7 @@ Acesse o contrato em PDF: ${pdfUrl}
 Após ler, confirme com a mensagem:
 'Confirmo ciência e concordância com o Termo de Efetivação da Locação da Lanchas Show.'`;
 
-      await sendWhatsAppMessage(customer.phone, whatsappMessageNoDocuseal);
+      await simulateTypingAndSend(customer.phone, whatsappMessageNoDocuseal);
       
       // Save outbound IA message
       const { data: conv } = await supabaseAdmin
@@ -215,7 +215,7 @@ ${signingUrl}
 Após ler e assinar, por favor confirme com a mensagem:
 'Confirmo ciência e concordância com o Termo de Efetivação da Locação da Lanchas Show.'`;
 
-    await sendWhatsAppMessage(customer.phone, whatsappMessage);
+    await simulateTypingAndSend(customer.phone, whatsappMessage);
 
     // Register IA message in DB
     const { data: conv } = await supabaseAdmin

@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { supabaseAdmin } from './supabase';
-import { sendWhatsAppMessage, sendPresence, simulateTypingAndSend } from './evolution';
+import { sendWhatsAppMessage, sendPresence, simulateTypingAndSend, calculateTypingDelay } from './evolution';
 import { getAiResponse } from './claude';
 import { messageQueue } from './queue';
 
@@ -10,8 +10,6 @@ const evolutionInstanceName = process.env.EVOLUTION_INSTANCE_NAME || 'lanchas_sh
 
 // Map to store debouncing timeouts per phone number
 const conversationTimeouts = new Map<string, NodeJS.Timeout>();
-
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
  * Extracts text content from various Evolution API message types.
@@ -116,16 +114,6 @@ async function transcribeAudio(base64DataStr: string, mimetype: string): Promise
 
   const data = await res.json();
   return data.text || '';
-}
-
-/**
- * Calculates typing animation duration based on character count.
- */
-function calculateTypingDelay(text: string): number {
-  // Base 1 second plus 30ms per character to simulate realistic typing
-  const delayMs = 1000 + (text.length * 30);
-  // Cap typing delay between 2 seconds and 9 seconds
-  return Math.min(Math.max(delayMs, 2000), 9000);
 }
 
 /**
@@ -585,16 +573,10 @@ export async function handleWhatsAppWebhook(req: Request, res: Response): Promis
                 return;
               }
 
-              // Send "composing" presence status again to ensure it remains active during the typing delay
-              await sendPresence(phone, 'composing');
-
-              // Wait dynamic typing delay
-              const delayMs = calculateTypingDelay(aiResponseText);
-              console.log(`[Webhook] Simulating typing. Waiting ${delayMs}ms before sending message.`);
-              await delay(delayMs);
-
-              // Send message to WhatsApp via Evolution API
-              await sendWhatsAppMessage(phone, aiResponseText);
+              // Realistic typing animation: keeps the three dots alive during the
+              // entire delay, proportional to the message length.
+              console.log(`[Webhook] Simulating typing for ${calculateTypingDelay(aiResponseText)}ms before sending.`);
+              await simulateTypingAndSend(phone, aiResponseText);
 
               // Save AI response in DB
               const { error: aiInsertError } = await supabaseAdmin

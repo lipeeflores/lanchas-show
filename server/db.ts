@@ -536,7 +536,7 @@ export async function broadcastPromotion(customMessage: string, mediaBase64?: st
       return { success: true, count: 0 };
     }
 
-    const { sendWhatsAppMessage, sendWhatsAppMedia } = await import('./evolution');
+    const { sendWhatsAppMedia, simulateTypingAndSend } = await import('./evolution');
 
     let count = 0;
     for (const conv of conversations) {
@@ -545,8 +545,8 @@ export async function broadcastPromotion(customMessage: string, mediaBase64?: st
           // Send media with the customMessage as caption
           await sendWhatsAppMedia(conv.contact_phone, mediaBase64, mediaMimetype, customMessage);
         } else {
-          // Send text message only
-          await sendWhatsAppMessage(conv.contact_phone, customMessage);
+          // Send text message with typing animation, so the broadcast looks like a real person texting
+          await simulateTypingAndSend(conv.contact_phone, customMessage);
         }
 
         // Save message in ia_messages

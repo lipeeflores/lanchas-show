@@ -2,7 +2,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
 import { handleWhatsAppWebhook } from './webhook';
-import { ensureInstanceCreated, getConnectionState, getConnectQrCode, sendWhatsAppMessage } from './evolution';
+import { ensureInstanceCreated, getConnectionState, getConnectQrCode, sendWhatsAppMessage, simulateTypingAndSend } from './evolution';
 import { startScheduler } from './scheduler';
 import { supabaseAdmin } from './supabase';
 import { handleAsaasWebhook } from './webhook_asaas';
@@ -127,7 +127,9 @@ app.post('/api/conversations/:id/messages', requireAdmin, async (req, res) => {
       throw new Error(convError?.message || 'Conversa não encontrada');
     }
 
-    await sendWhatsAppMessage(conv.contact_phone, content);
+    // Mesma mensagem manual do admin também passa por typing simulation, pra
+    // que o cliente perceba "alguém está digitando" — indistinguível de IA ou humano.
+    await simulateTypingAndSend(conv.contact_phone, content);
 
     const { data: message, error: insertError } = await supabaseAdmin
       .from('ia_messages')

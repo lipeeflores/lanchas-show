@@ -244,13 +244,46 @@ export async function sendWhatsAppMedia(toPhone: string, base64Data: string, mim
 }
 
 /**
- * Simulates human typing: sends composing presence, waits a realistic delay, then sends the message.
- * Use this instead of sendWhatsAppMessage for all automated/scheduled messages.
+ * Calculates a realistic human typing delay for a given text.
+ * - Base latency: 1.5s of "thinking" before starting to type
+ * - Typing speed: ~55ms per character (around 250 cpm — natural mobile typing)
+ * - Clamped between 2s and 18s so very short messages still feel deliberate
+ *   and very long messages don't keep the user waiting forever.
+ */
+export function calculateTypingDelay(text: string): number {
+  const length = (text || '').length;
+  const raw = 1500 + length * 55;
+  return Math.min(Math.max(raw, 2000), 18000);
+}
+
+/**
+ * Simulates human typing on WhatsApp:
+ *   1. Sends "composing" presence (the three dots appear)
+ *   2. Waits proportionally to the message length
+ *   3. Keeps the "composing" presence alive every ~4s so the dots don't time out
+ *      (Evolution / WhatsApp presence naturally expires after ~10s)
+ *   4. Finally sends the message
+ *
+ * Use this for ALL automated client-facing messages so the experience is
+ * indistinguishable from a real person typing.
  */
 export async function simulateTypingAndSend(toPhone: string, text: string): Promise<void> {
-  const delayMs = Math.min(Math.max(1000 + text.length * 25, 1500), 6000);
+  const delayMs = calculateTypingDelay(text);
+  const PRESENCE_REFRESH_MS = 4000;
+
   await sendPresence(toPhone, 'composing');
-  await new Promise(resolve => setTimeout(resolve, delayMs));
+
+  const startTime = Date.now();
+  while (Date.now() - startTime < delayMs) {
+    const remaining = delayMs - (Date.now() - startTime);
+    const sleep = Math.min(PRESENCE_REFRESH_MS, remaining);
+    await new Promise(resolve => setTimeout(resolve, sleep));
+    if (Date.now() - startTime < delayMs - 200) {
+      // Refresh presence so the typing indicator stays visible during long delays.
+      await sendPresence(toPhone, 'composing').catch(() => undefined);
+    }
+  }
+
   await sendWhatsAppMessage(toPhone, text);
 }
 
