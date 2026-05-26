@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { Request, Response } from 'express';
 import { supabaseAdmin } from './supabase';
 import { simulateTypingAndSend } from './evolution';
@@ -5,8 +6,33 @@ import { simulateTypingAndSend } from './evolution';
 /**
  * Webhook handler for DocuSeal.
  * Triggers when a document signature is completed.
+ *
+ * DocuSeal can sign webhooks via HMAC-SHA256 of the raw body using a shared secret.
+ * The signature arrives in the 'x-docuseal-signature' header. If DOCUSEAL_WEBHOOK_SECRET
+ * is not configured, verification is skipped with a warning (useful before going live).
  */
 export async function handleDocusealWebhook(req: Request, res: Response): Promise<void> {
+  const secret = process.env.DOCUSEAL_WEBHOOK_SECRET;
+  if (secret) {
+    const received = req.headers['x-docuseal-signature'];
+    const raw = (req as any).rawBody as Buffer | undefined;
+    if (typeof received !== 'string' || !raw) {
+      console.warn('[DocuSeal Webhook] Rejected: missing signature header or raw body.');
+      res.status(401).json({ status: 'unauthorized' });
+      return;
+    }
+    const expected = crypto.createHmac('sha256', secret).update(raw).digest('hex');
+    const receivedBuf = Buffer.from(received);
+    const expectedBuf = Buffer.from(expected);
+    if (receivedBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(receivedBuf, expectedBuf)) {
+      console.warn('[DocuSeal Webhook] Rejected: HMAC signature mismatch.');
+      res.status(401).json({ status: 'unauthorized' });
+      return;
+    }
+  } else {
+    console.warn('[DocuSeal Webhook] DOCUSEAL_WEBHOOK_SECRET not configured — accepting request without verification. Configure it in .env before going live.');
+  }
+
   const body = req.body;
   const event = body.event || '';
   

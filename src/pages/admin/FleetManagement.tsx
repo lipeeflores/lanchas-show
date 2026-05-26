@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
+import { adminPost, adminPatch, adminDelete, adminPut } from '../../lib/adminApi';
 import { Anchor, Ship, CalendarCheck, FileText, Banknote, Landmark, CheckCircle, Clock, AlertCircle, Wallet, Users, Bot, Plus, X, Save, Settings, Trash2, MapPin, Upload, Image as ImageIcon, Loader2, Star, Phone, Edit2, UserPlus } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../components/AdminLayout';
@@ -158,9 +159,7 @@ export default function FleetManagement() {
   const handleSaveContractTemplate = async () => {
     setContractSaving(true);
     try {
-      const { error } = await supabase
-        .from('contratos_template')
-        .upsert({ id: 'default', html_content: contractHtml, updated_at: new Date().toISOString() });
+      const { error } = await adminPut('/api/admin/contratos-template', { html_content: contractHtml });
       if (error) throw error;
       alert('Template de contrato atualizado com sucesso!');
     } catch (err: any) {
@@ -238,13 +237,8 @@ export default function FleetManagement() {
 
     setSaving(true);
     try {
-      // 1. Delete dependent data
-      await supabase.from('boat_routes_pricing').delete().eq('boat_id', editingBoatId);
-      await supabase.from('boat_expenses').delete().eq('boat_id', editingBoatId);
-      await supabase.from('reservations').delete().eq('boat_id', editingBoatId);
-      
-      // 2. Delete the boat
-      const { error } = await supabase.from('boats').delete().eq('id', editingBoatId);
+      // Backend cascades routes, expenses, reservations, and finally the boat.
+      const { error } = await adminDelete(`/api/admin/boats/${editingBoatId}`);
       if (error) throw error;
 
       setIsModalOpen(false);
@@ -262,18 +256,15 @@ export default function FleetManagement() {
       const payable = payables.find(p => p.id === id);
       if (!payable) throw new Error("Conta não encontrada");
 
-      const { error } = await supabase
-        .from('accounts_payable')
-        .update({ status: 'PAID' })
-        .eq('id', id);
+      const { error } = await adminPatch(`/api/admin/accounts-payable/${id}`, { status: 'PAID' });
       if (error) throw error;
 
       const prefix = payable.payee_type === 'PARTNER' ? '[PARCEIRO]' : '[GERAL]';
-      const { error: txError } = await supabase.from('cash_transactions').insert([{
+      const { error: txError } = await adminPost('/api/admin/cash-transactions', {
         type: 'EXPENSE',
         amount: Number(payable.amount),
         description: `${prefix} ${payable.description}`
-      }]);
+      });
       if (txError) throw txError;
 
       fetchData();
@@ -285,10 +276,7 @@ export default function FleetManagement() {
   const handleDeletePayable = async (id: string) => {
     if (!window.confirm('Excluir esta conta?')) return;
     try {
-      const { error } = await supabase
-        .from('accounts_payable')
-        .delete()
-        .eq('id', id);
+      const { error } = await adminDelete(`/api/admin/accounts-payable/${id}`);
       if (error) throw error;
       fetchData();
     } catch (error: any) {
@@ -308,10 +296,10 @@ export default function FleetManagement() {
         management_level: ownerFormData.management_level
       };
       if (editingOwnerId) {
-        const { error } = await supabase.from('partners').update(payload).eq('id', editingOwnerId);
+        const { error } = await adminPatch(`/api/admin/partners/${editingOwnerId}`, payload);
         if (error) throw error;
       } else {
-        const { error } = await supabase.from('partners').insert([payload]);
+        const { error } = await adminPost('/api/admin/partners', payload);
         if (error) throw error;
       }
       setIsOwnerModalOpen(false);
@@ -328,8 +316,8 @@ export default function FleetManagement() {
   const handleDeleteOwner = async (id: string) => {
     if (!window.confirm('Excluir este dono/parceiro? Os barcos vinculados a ele perderão a associação.')) return;
     try {
-      await supabase.from('boats').update({ partner_id: null }).eq('partner_id', id);
-      const { error } = await supabase.from('partners').delete().eq('id', id);
+      // Backend detaches boats (partner_id = null) before deleting the partner.
+      const { error } = await adminDelete(`/api/admin/partners/${id}`);
       if (error) throw error;
       fetchData();
     } catch (error: any) {
@@ -363,17 +351,15 @@ export default function FleetManagement() {
         partner_id: null,
         status: 'PAID'
       };
-      const { error } = await supabase
-        .from('accounts_payable')
-        .insert([payload]);
+      const { error } = await adminPost('/api/admin/accounts-payable', payload);
       if (error) throw error;
 
       // Register in cash_transactions for DRE
-      const { error: txError } = await supabase.from('cash_transactions').insert([{
+      const { error: txError } = await adminPost('/api/admin/cash-transactions', {
         type: 'EXPENSE',
         amount: Number(payableFormData.amount),
         description: `[GERAL] ${payableFormData.description}`
-      }]);
+      });
       if (txError) throw txError;
 
       setIsPayableModalOpen(false);
@@ -395,22 +381,22 @@ export default function FleetManagement() {
     }
 
     try {
-      const { data: exp, error } = await supabase.from('boat_expenses').insert([{
+      const { error } = await adminPost('/api/admin/boat-expenses', {
         boat_id: expenseFormData.boat_id,
         type: expenseFormData.type,
         amount: Number(expenseFormData.amount),
         date: finalDate,
         description: expenseFormData.description,
         category: expenseFormData.type === 'FIXED' ? 'FIXED_EXPENSE' : 'VARIABLE_EXPENSE'
-      }]).select('*').single();
+      });
       if (error) throw error;
 
       if (expenseFormData.type === 'VARIABLE') {
-          const { error: txError } = await supabase.from('cash_transactions').insert([{
+          const { error: txError } = await adminPost('/api/admin/cash-transactions', {
               type: 'EXPENSE',
               amount: Number(expenseFormData.amount),
               description: `[VARIÁVEL] ${expenseFormData.description} (${expenseFormData.boat_name})`
-          }]);
+          });
           if (txError) throw txError;
       }
       
@@ -451,37 +437,29 @@ export default function FleetManagement() {
         catalogo_url: formData.catalogo_url || null
       };
 
-      let boatId = editingBoatId;
+      const normalizedRoutes = boatRoutes.map(r => ({
+        embarkation_point: r.embarkation_point,
+        destination_point: r.destination_point,
+        price_low_season: Number(r.price_low_season),
+        min_price_low_season: Number(r.min_price_low_season),
+        price_weekend_holiday: Number(r.price_weekend_holiday),
+        min_price_weekend_holiday: Number(r.min_price_weekend_holiday),
+        price_high_season: Number(r.price_high_season),
+        min_price_high_season: Number(r.min_price_high_season),
+      }));
+
       if (editingBoatId) {
-        const { error } = await supabase.from('boats').update(payload).eq('id', editingBoatId);
+        const { error } = await adminPatch(`/api/admin/boats/${editingBoatId}`, {
+          boat: payload,
+          routes: normalizedRoutes
+        });
         if (error) throw error;
       } else {
-        const { data, error } = await supabase.from('boats').insert([payload]).select('id').single();
+        const { error } = await adminPost('/api/admin/boats', {
+          boat: payload,
+          routes: normalizedRoutes
+        });
         if (error) throw error;
-        boatId = data?.id;
-      }
-
-      // Save routes
-      if (boatId) {
-        // Delete old routes and re-insert
-        const { error: deleteError } = await supabase.from('boat_routes_pricing').delete().eq('boat_id', boatId);
-        if (deleteError) throw deleteError;
-
-        if (boatRoutes.length > 0) {
-          const routePayloads = boatRoutes.map(r => ({
-            boat_id: boatId,
-            embarkation_point: r.embarkation_point,
-            destination_point: r.destination_point,
-            price_low_season: Number(r.price_low_season),
-            min_price_low_season: Number(r.min_price_low_season),
-            price_weekend_holiday: Number(r.price_weekend_holiday),
-            min_price_weekend_holiday: Number(r.min_price_weekend_holiday),
-            price_high_season: Number(r.price_high_season),
-            min_price_high_season: Number(r.min_price_high_season),
-          }));
-          const { error: insertError } = await supabase.from('boat_routes_pricing').insert(routePayloads);
-          if (insertError) throw insertError;
-        }
       }
 
       setIsModalOpen(false);
@@ -799,7 +777,8 @@ export default function FleetManagement() {
                                               onClick={async () => {
                                                   if(!window.confirm('Deseja realmente excluir esta despesa?')) return;
                                                   try {
-                                                    await supabase.from('boat_expenses').delete().eq('id', exp.id);
+                                                    const { error } = await adminDelete(`/api/admin/boat-expenses/${exp.id}`);
+                                                    if (error) throw error;
                                                     fetchData();
                                                   } catch (err) {
                                                     alert('Erro ao excluir despesa');

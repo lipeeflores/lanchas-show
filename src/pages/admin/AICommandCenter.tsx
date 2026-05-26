@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
+import { adminFetch, adminPatch } from '../../lib/adminApi';
 import { Anchor, Ship, CalendarCheck, Bot, MessageCircle, Shield, ShieldOff, Send, Image, CheckCircle, Clock, Landmark, Wallet, Users, Megaphone, Tag, Star, AlertTriangle, RefreshCw, ArrowLeft, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../components/AdminLayout';
@@ -30,7 +31,7 @@ export default function AICommandCenter() {
     setCheckingWa(true);
     setConnectionError(null);
     try {
-      const res = await fetch('/api/whatsapp/connect');
+      const res = await adminFetch('/api/whatsapp/connect');
       if (res.ok) {
         const data = await res.json();
         setWaState(data.state);
@@ -166,9 +167,8 @@ export default function AICommandCenter() {
   const handleTakeoverToggle = async (convId: string, currentStatus: string) => {
     const newStatus = currentStatus === 'AI_CONTROL' ? 'HUMAN_CONTROL' : 'AI_CONTROL';
     try {
-      const res = await fetch(`/api/conversations/${convId}/mode`, {
+      const res = await adminFetch(`/api/conversations/${convId}/mode`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus })
       });
       if (!res.ok) throw new Error('Falha ao alterar o modo da conversa.');
@@ -185,9 +185,8 @@ export default function AICommandCenter() {
     if (!selectedConvId || !typedMessage.trim() || sendingMessage) return;
     setSendingMessage(true);
     try {
-      const res = await fetch(`/api/conversations/${selectedConvId}/messages`, {
+      const res = await adminFetch(`/api/conversations/${selectedConvId}/messages`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: typedMessage })
       });
       if (!res.ok) throw new Error('Falha ao enviar a mensagem.');
@@ -207,7 +206,11 @@ export default function AICommandCenter() {
   };
 
   const handleApproveCampaign = async (campId: string) => {
-    await supabase.from('ia_campaigns').update({ status: 'APPROVED', approved_at: new Date().toISOString() }).eq('id', campId);
+    const { error } = await adminPatch(`/api/admin/ia-campaigns/${campId}/approve`);
+    if (error) {
+      alert('Erro ao aprovar campanha: ' + error.message);
+      return;
+    }
     setCampaigns(prev => prev.map(c => c.id === campId ? { ...c, status: 'APPROVED' } : c));
   };
 
@@ -225,7 +228,7 @@ export default function AICommandCenter() {
 
   const getSenderLabel = (sender: string) => {
     switch (sender) {
-      case 'IA': return '🤖 Lara (IA)';
+      case 'IA': return '🤖 Isabelle (IA)';
       case 'ADMIN': return '👤 Você (Admin)';
       case 'CLIENT': return '💬 Cliente';
       case 'PARTNER': return '🤝 Parceiro';
@@ -359,7 +362,7 @@ export default function AICommandCenter() {
                         <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
                         <div>
                           <p className="text-sm font-bold text-white">WhatsApp Desconectado</p>
-                          <p className="text-xs text-gray-400">O atendente virtual Lara não poderá responder às mensagens até que você conecte o WhatsApp.</p>
+                          <p className="text-xs text-gray-400">A atendente virtual Isabelle não poderá responder às mensagens até que você conecte o WhatsApp.</p>
                           {connectionError && (
                             <p className="text-xs text-rose-400 font-semibold mt-1 bg-rose-500/10 px-2 py-1 rounded border border-rose-500/20 max-w-md">
                               {connectionError}
@@ -427,9 +430,9 @@ export default function AICommandCenter() {
                           }`}
                         >
                           {selectedConv.status === 'AI_CONTROL' ? (
-                            <><Shield className="w-4 h-4" /> Assumir Controle (Pausar Lara)</>
+                            <><Shield className="w-4 h-4" /> Assumir Controle (Pausar Isabelle)</>
                           ) : (
-                            <><ShieldOff className="w-4 h-4" /> Devolver p/ Lara (IA)</>
+                            <><ShieldOff className="w-4 h-4" /> Devolver p/ Isabelle (IA)</>
                           )}
                         </button>
                       </div>
@@ -474,13 +477,13 @@ export default function AICommandCenter() {
                             </button>
                           </div>
                           <p className="text-[10px] text-yellow-500 mt-2 font-medium flex items-center gap-1">
-                            <AlertTriangle className="w-3.5 h-3.5" /> Controle Manual Ativo. Lara está em modo silencioso e não responderá a este cliente.
+                            <AlertTriangle className="w-3.5 h-3.5" /> Controle Manual Ativo. Isabelle está em modo silencioso e não responderá a este cliente.
                           </p>
                         </div>
                       ) : (
                         <div className="p-4 border-t border-slate-800 bg-purple-500/5 text-center shrink-0">
                           <p className="text-xs text-purple-400 flex items-center justify-center gap-2 font-semibold">
-                            <Bot className="w-4 h-4 animate-pulse text-purple-400" /> A Lara está conduzindo esta conversa de forma 100% autônoma.
+                            <Bot className="w-4 h-4 animate-pulse text-purple-400" /> A Isabelle está conduzindo esta conversa de forma 100% autônoma.
                           </p>
                         </div>
                       )}
@@ -575,7 +578,7 @@ export default function AICommandCenter() {
               <h3 className="text-xl font-bold text-white flex items-center justify-center gap-2">
                 Sincronizar WhatsApp
               </h3>
-              <p className="text-xs text-slate-400 mt-1">Conecte o número do seu celular para ativar Lara (IA)</p>
+              <p className="text-xs text-slate-400 mt-1">Conecte o número do seu celular para ativar Isabelle (IA)</p>
             </div>
 
             {checkingWa && !qrCode ? (

@@ -7,36 +7,60 @@ import { startScheduler } from './scheduler';
 import { supabaseAdmin } from './supabase';
 import { handleAsaasWebhook } from './webhook_asaas';
 import { handleDocusealWebhook } from './webhook_docuseal';
+import { requireAdmin, signSession, validateAdminCredentials } from './auth';
+import { registerAdminRoutes } from './admin_routes';
 
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 const app = express();
 const port = process.env.PORT || 3001;
 
-// Middleware
-app.use(express.json());
+// Capture the raw body for webhook signature verification (DocuSeal HMAC).
+app.use(express.json({
+  verify: (req: any, _res, buf) => {
+    req.rawBody = buf;
+  }
+}));
 
-// Webhooks
+// ──────────────────────────────────────────────────────────────────
+// Webhooks (each handler validates its own signature/token).
+// ──────────────────────────────────────────────────────────────────
 app.post('/api/asaas/webhook', handleAsaasWebhook);
 app.post('/api/docuseal/webhook', handleDocusealWebhook);
 
-// Routes
-// 1. Webhook endpoint from Evolution API (using wildcard to capture event sub-paths)
+// Evolution API webhook (using wildcard to capture event sub-paths).
 app.post('/api/whatsapp/webhook*', (req, res, next) => {
   console.log(`[Server] Webhook received: ${req.method} ${req.url}`);
   next();
 }, handleWhatsAppWebhook);
 
-// 2. WhatsApp connection status and QR code endpoint
-app.get('/api/whatsapp/connect', async (req, res) => {
+// ──────────────────────────────────────────────────────────────────
+// Admin authentication
+// ──────────────────────────────────────────────────────────────────
+app.post('/api/admin/login', (req, res) => {
+  const { username, password } = req.body || {};
+  if (!validateAdminCredentials(username, password)) {
+    res.status(401).json({ success: false, error: 'Credenciais inválidas.' });
+    return;
+  }
+  const token = signSession(username);
+  res.json({ success: true, token });
+});
+
+// ──────────────────────────────────────────────────────────────────
+// Protected admin endpoints
+// ──────────────────────────────────────────────────────────────────
+
+// WhatsApp connection status and QR code endpoint.
+app.get('/api/whatsapp/connect', requireAdmin, async (_req, res) => {
   try {
     const state = await getConnectionState();
     let qr = null;
-    
+
     if (state !== 'open') {
       qr = await getConnectQrCode();
     }
-    
+
     res.json({
       success: true,
       state,
@@ -48,10 +72,10 @@ app.get('/api/whatsapp/connect', async (req, res) => {
   }
 });
 
-// 3. Toggle conversation mode (AI_CONTROL vs HUMAN_CONTROL)
-app.patch('/api/conversations/:id/mode', async (req, res) => {
+// Toggle conversation mode (AI_CONTROL vs HUMAN_CONTROL).
+app.patch('/api/conversations/:id/mode', requireAdmin, async (req, res) => {
   const { id } = req.params;
-  const { status } = req.body; // should be 'AI_CONTROL' or 'HUMAN_CONTROL'
+  const { status } = req.body;
 
   if (status !== 'AI_CONTROL' && status !== 'HUMAN_CONTROL') {
     res.status(400).json({ success: false, error: 'Status inválido. Deve ser AI_CONTROL ou HUMAN_CONTROL.' });
@@ -75,8 +99,15 @@ app.patch('/api/conversations/:id/mode', async (req, res) => {
   }
 });
 
-// 4. Send manual message from Admin
-app.post('/api/conversations/:id/messages', async (req, res) => {
+// All admin write endpoints (under /api/admin/*) require a valid session.
+app.use('/api/admin', (req, res, next) => {
+  if (req.path === '/login') return next();
+  return requireAdmin(req, res, next);
+});
+registerAdminRoutes(app);
+
+// Send manual message from Admin.
+app.post('/api/conversations/:id/messages', requireAdmin, async (req, res) => {
   const { id } = req.params;
   const { content } = req.body;
 
@@ -86,7 +117,6 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
   }
 
   try {
-    // 1. Get conversation to retrieve contact phone
     const { data: conv, error: convError } = await supabaseAdmin
       .from('ia_conversations')
       .select('*')
@@ -97,10 +127,8 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
       throw new Error(convError?.message || 'Conversa não encontrada');
     }
 
-    // 2. Send via WhatsApp
     await sendWhatsAppMessage(conv.contact_phone, content);
 
-    // 3. Save as ADMIN in database
     const { data: message, error: insertError } = await supabaseAdmin
       .from('ia_messages')
       .insert({
@@ -123,8 +151,7 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
 // Start Server
 app.listen(port, async () => {
   console.log(`[Server] Backend listening on port ${port}`);
-  
-  // Initialize services
+
   await ensureInstanceCreated();
   startScheduler();
 });

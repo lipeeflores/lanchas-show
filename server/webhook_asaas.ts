@@ -5,8 +5,24 @@ import { simulateTypingAndSend } from './evolution';
 /**
  * Webhook handler for Asaas Payment Gateway.
  * Activates when a payment is received/confirmed.
+ *
+ * Asaas sends a custom 'asaas-access-token' header configured in the Asaas dashboard.
+ * We verify it against ASAAS_WEBHOOK_TOKEN. If the env var is not set, the check is
+ * skipped with a warning (useful while the Asaas account is not yet provisioned).
  */
 export async function handleAsaasWebhook(req: Request, res: Response): Promise<void> {
+  const expected = process.env.ASAAS_WEBHOOK_TOKEN;
+  if (expected) {
+    const received = req.headers['asaas-access-token'];
+    if (typeof received !== 'string' || received !== expected) {
+      console.warn('[Asaas Webhook] Rejected request with invalid asaas-access-token header.');
+      res.status(401).json({ status: 'unauthorized' });
+      return;
+    }
+  } else {
+    console.warn('[Asaas Webhook] ASAAS_WEBHOOK_TOKEN not configured — accepting request without verification. Configure it in .env before going live.');
+  }
+
   const body = req.body;
   const event = body.event || '';
   const payment = body.payment || {};

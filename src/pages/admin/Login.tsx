@@ -2,27 +2,31 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Anchor, Lock, User, ArrowRight } from 'lucide-react';
 import { motion } from 'motion/react';
+import { adminLogin, isAdminAuthenticated } from '../../lib/adminApi';
 
 export default function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const navigate = useNavigate();
 
-  // Check if already logged in
   useEffect(() => {
-    if (localStorage.getItem('lanchas_show_auth') === 'true') {
+    if (isAdminAuthenticated()) {
       navigate('/admin/dashboard');
     }
   }, [navigate]);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (username === 'ADMIN' && password === 'ADMIN') {
-      localStorage.setItem('lanchas_show_auth', 'true');
+    setError('');
+    setSubmitting(true);
+    const result = await adminLogin(username, password);
+    setSubmitting(false);
+    if (result.ok) {
       navigate('/admin/dashboard');
     } else {
-      setError('Credenciais inválidas. Tente novamente.');
+      setError(result.error || 'Credenciais inválidas. Tente novamente.');
     }
   };
 
@@ -77,11 +81,12 @@ export default function Login() {
               <p className="text-red-400 text-sm text-center bg-red-400/10 py-2 rounded-lg border border-red-400/20">{error}</p>
             )}
 
-            <button 
+            <button
               type="submit"
-              className="w-full bg-gradient-to-r from-yellow-600 to-yellow-500 hover:from-yellow-500 hover:to-yellow-400 text-slate-900 font-bold text-lg py-3 px-6 rounded-xl shadow-[0_0_20px_rgba(234,179,8,0.2)] hover:shadow-[0_0_30px_rgba(234,179,8,0.4)] transition-all flex items-center justify-center gap-2 mt-4"
+              disabled={submitting}
+              className="w-full bg-gradient-to-r from-yellow-600 to-yellow-500 hover:from-yellow-500 hover:to-yellow-400 disabled:opacity-60 disabled:cursor-not-allowed text-slate-900 font-bold text-lg py-3 px-6 rounded-xl shadow-[0_0_20px_rgba(234,179,8,0.2)] hover:shadow-[0_0_30px_rgba(234,179,8,0.4)] transition-all flex items-center justify-center gap-2 mt-4"
             >
-              Acessar Painel <ArrowRight className="w-5 h-5" />
+              {submitting ? 'Acessando...' : <>Acessar Painel <ArrowRight className="w-5 h-5" /></>}
             </button>
           </form>
         </div>

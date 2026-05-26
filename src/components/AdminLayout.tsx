@@ -1,10 +1,17 @@
 import React, { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { Ship, CalendarCheck, Landmark, Wallet, Users, Bot, Settings, Star, Menu, X } from 'lucide-react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Ship, CalendarCheck, Landmark, Wallet, Users, Bot, Settings, Star, Menu, X, LogOut } from 'lucide-react';
+import { clearAdminSession } from '../lib/adminApi';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
+  const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
+
+  const handleLogout = () => {
+    clearAdminSession();
+    navigate('/admin', { replace: true });
+  };
 
   const menuItems = [
     { path: '/admin/dashboard', label: 'Visão 360º', icon: Ship },
@@ -54,9 +61,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             })}
           </nav>
         </div>
-        <div className="p-4 border-t border-slate-800">
-          <Link to="/" className="text-gray-500 hover:text-gray-300 text-sm flex items-center justify-center transition-colors">
-            Sair e voltar ao site
+        <div className="p-4 border-t border-slate-800 space-y-2">
+          <button
+            onClick={handleLogout}
+            className="w-full text-rose-400 hover:text-rose-300 text-sm flex items-center justify-center gap-2 transition-colors py-2 rounded-lg hover:bg-rose-500/10"
+          >
+            <LogOut className="w-4 h-4" /> Sair (Logout)
+          </button>
+          <Link to="/" className="text-gray-500 hover:text-gray-300 text-xs flex items-center justify-center transition-colors">
+            Voltar ao site
           </Link>
         </div>
       </aside>
@@ -81,9 +94,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             })}
           </nav>
         </div>
-        <div className="p-4 border-t border-slate-800">
-          <Link to="/" onClick={() => setIsOpen(false)} className="text-gray-500 hover:text-gray-300 text-sm flex items-center justify-center transition-colors">
-            Sair e voltar ao site
+        <div className="p-4 border-t border-slate-800 space-y-2">
+          <button
+            onClick={() => { setIsOpen(false); handleLogout(); }}
+            className="w-full text-rose-400 hover:text-rose-300 text-sm flex items-center justify-center gap-2 transition-colors py-2 rounded-lg hover:bg-rose-500/10"
+          >
+            <LogOut className="w-4 h-4" /> Sair (Logout)
+          </button>
+          <Link to="/" onClick={() => setIsOpen(false)} className="text-gray-500 hover:text-gray-300 text-xs flex items-center justify-center transition-colors">
+            Voltar ao site
           </Link>
         </div>
       </div>

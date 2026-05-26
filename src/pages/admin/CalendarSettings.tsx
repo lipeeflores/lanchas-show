@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
+import { adminPut } from '../../lib/adminApi';
 import { getPricingTier, PricingTier } from '../../lib/pricingEngine';
 import { Anchor, Ship, CalendarCheck, Sun, Snowflake, PartyPopper, Landmark, Wallet, Users, Bot, Save, X, Plus, Trash2, CheckCircle, AlertCircle, Settings, Star } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -49,18 +50,15 @@ export default function CalendarSettings() {
   const handleSave = async () => {
     setSaving(true);
     setSaved(false);
-    const upserts = [
-      { key: 'high_season_start', value: JSON.stringify(highSeasonStart), updated_at: new Date().toISOString() },
-      { key: 'high_season_end', value: JSON.stringify(highSeasonEnd), updated_at: new Date().toISOString() },
-      { key: 'custom_holidays', value: JSON.stringify(customHolidays.map(h => h.date)), updated_at: new Date().toISOString() },
+    const upserts: { key: string; value: any }[] = [
+      { key: 'high_season_start', value: highSeasonStart },
+      { key: 'high_season_end', value: highSeasonEnd },
+      { key: 'custom_holidays', value: customHolidays.map(h => h.date) },
     ];
 
     try {
       for (const u of upserts) {
-        const { error } = await supabase.from('global_settings').upsert(
-          { key: u.key, value: JSON.parse(u.value), updated_at: u.updated_at },
-          { onConflict: 'key' }
-        );
+        const { error } = await adminPut('/api/admin/global-settings', u);
         if (error) throw error;
       }
       setSaved(true);

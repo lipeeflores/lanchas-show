@@ -3,6 +3,15 @@ import { supabaseAdmin } from './supabase';
 export type PricingTier = 'low_season' | 'high_season' | 'weekend_holiday';
 
 /**
+ * Escapes LIKE/ILIKE wildcards (% and _) and backslash in a user-provided string so it
+ * can't be used to broaden the match unexpectedly. Necessary because search inputs flow
+ * from free-text WhatsApp messages and tool arguments produced by the LLM.
+ */
+function escapeLikePattern(str: string): string {
+  return String(str).replace(/\\/g, '\\\\').replace(/[%_]/g, '\\$&');
+}
+
+/**
  * Determines the pricing tier for a given date.
  */
 export async function getPricingTierForDate(dateStr: string): Promise<PricingTier> {
@@ -650,7 +659,7 @@ export async function completeBoarding(data: {
       const { data: boats, error: boatsError } = await supabaseAdmin
         .from('boats')
         .select('id, name')
-        .ilike('name', `%${data.boat_name}%`);
+        .ilike('name', `%${escapeLikePattern(data.boat_name)}%`);
 
       if (boatsError) throw boatsError;
       if (!boats || boats.length === 0) {
@@ -724,10 +733,10 @@ export async function searchClientConversations(query: string) {
     const { data: byName } = await supabaseAdmin
       .from('ia_conversations')
       .select('id, contact_name, contact_phone, stage, status, subject, target_date, created_at, pending_owners_question')
-      .ilike('contact_name', `%${query}%`)
+      .ilike('contact_name', `%${escapeLikePattern(query)}%`)
       .order('created_at', { ascending: false })
       .limit(10);
-    
+
     if (byName) conversations.push(...byName);
 
     // Also search by phone if the query has digits
@@ -735,7 +744,7 @@ export async function searchClientConversations(query: string) {
       const { data: byPhone } = await supabaseAdmin
         .from('ia_conversations')
         .select('id, contact_name, contact_phone, stage, status, subject, target_date, created_at, pending_owners_question')
-        .ilike('contact_phone', `%${cleanQuery}%`)
+        .ilike('contact_phone', `%${escapeLikePattern(cleanQuery)}%`)
         .order('created_at', { ascending: false })
         .limit(10);
       

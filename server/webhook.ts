@@ -130,8 +130,26 @@ function calculateTypingDelay(text: string): number {
 
 /**
  * Webhook handler for Evolution API.
+ *
+ * Evolution does not sign webhooks natively. We rely on an optional shared secret
+ * (EVOLUTION_WEBHOOK_TOKEN). Configure the Evolution webhook URL with the token as
+ * a query parameter (e.g. https://backend/api/whatsapp/webhook?token=XYZ) and set
+ * EVOLUTION_WEBHOOK_TOKEN=XYZ here. If not configured, the check is skipped with a
+ * warning (useful for local testing while the public URL is private).
  */
 export async function handleWhatsAppWebhook(req: Request, res: Response): Promise<void> {
+  const expectedToken = process.env.EVOLUTION_WEBHOOK_TOKEN;
+  if (expectedToken) {
+    const received = (req.query.token as string | undefined) || (req.headers['x-webhook-token'] as string | undefined) || '';
+    if (received !== expectedToken) {
+      console.warn('[Webhook] Rejected request with invalid token.');
+      res.status(401).json({ status: 'unauthorized' });
+      return;
+    }
+  } else {
+    console.warn('[Webhook] EVOLUTION_WEBHOOK_TOKEN not configured — accepting request without verification. Configure it in .env before going live.');
+  }
+
   const body = req.body;
   const event = body.event || '';
   

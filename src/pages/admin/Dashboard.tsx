@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { Anchor, Ship, CalendarCheck, DollarSign, BellRing, AlertCircle, CheckCircle, Clock, Landmark, Wallet, Users, Bot, Settings, Star } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
+import { adminPost, adminPatch } from '../../lib/adminApi';
 import AdminLayout from '../../components/AdminLayout';
 
 export default function Dashboard() {
@@ -159,23 +160,23 @@ export default function Dashboard() {
 
   const handleMarkExpensePaid = async (exp: any) => {
       try {
-          const { error: err1 } = await supabase.from('accounts_payable').insert([{
+          const { error: err1 } = await adminPost('/api/admin/accounts-payable', {
               amount: exp.amount,
               description: `Pagamento Fixo: ${exp.description}`,
               status: 'PAID',
               due_date: exp.due_date.toISOString().split('T')[0],
               boat_expense_id: exp.id,
               payee_type: 'EXTERNAL'
-          }]);
+          });
           if (err1) throw err1;
-          
-          const { error: err2 } = await supabase.from('cash_transactions').insert([{
+
+          const { error: err2 } = await adminPost('/api/admin/cash-transactions', {
               type: 'EXPENSE',
               amount: exp.amount,
               description: `[FIXO] ${exp.description} (${exp.boats?.name || 'Geral'})`
-          }]);
+          });
           if (err2) throw err2;
-          
+
           setPendingFixedExpenses(prev => prev.filter(p => p.id !== exp.id));
       } catch (err: any) {
           alert('Erro ao dar baixa: ' + err.message);
@@ -184,7 +185,8 @@ export default function Dashboard() {
 
   const handleApprovePartner = async (id: string) => {
       try {
-          await supabase.from('reservations').update({ status: 'PENDING_CONTRACT' }).eq('id', id);
+          const { error } = await adminPatch(`/api/admin/reservations/${id}`, { status: 'PENDING_CONTRACT' });
+          if (error) throw error;
           const res = partnersToApprove.find(r => r.id === id);
           if (res) {
               setPartnersToApprove(prev => prev.filter(r => r.id !== id));
@@ -198,7 +200,8 @@ export default function Dashboard() {
 
   const handleConfirmContract = async (id: string) => {
       try {
-          await supabase.from('reservations').update({ status: 'CONFIRMED' }).eq('id', id);
+          const { error } = await adminPatch(`/api/admin/reservations/${id}`, { status: 'CONFIRMED' });
+          if (error) throw error;
           setContractsPending(prev => prev.filter(r => r.id !== id));
       } catch (err: any) {
           alert('Erro ao confirmar contrato: ' + err.message);

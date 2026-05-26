@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
+import { adminPatch } from '../../lib/adminApi';
 import { Anchor, Ship, CalendarCheck, Users, Search, Download, Landmark, Wallet, Tag, Bot, Settings, Star } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../components/AdminLayout';
@@ -49,7 +50,7 @@ export default function CustomersDB() {
     if (!editingCustomer) return;
     setSaving(true);
     try {
-      const { error } = await supabase.from('customers').update({
+      const { error } = await adminPatch(`/api/admin/customers/${editingCustomer.id}`, {
         full_name: editingCustomer.full_name,
         email: editingCustomer.email,
         phone: editingCustomer.phone,
@@ -60,8 +61,8 @@ export default function CustomersDB() {
         tags: editingCustomer.tags,
         rating_stars: editingCustomer.rating_stars,
         rating_notes: editingCustomer.rating_notes
-      }).eq('id', editingCustomer.id);
-      
+      });
+
       if (error) throw error;
       
       // Update local state

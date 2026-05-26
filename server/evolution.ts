@@ -64,8 +64,10 @@ export async function ensureInstanceCreated(): Promise<void> {
         backendHost = backendHost.slice(0, -1);
       }
       
-      const webhookUrl = `${backendHost}/api/whatsapp/webhook`;
-      console.log(`[Evolution] Automatically configuring webhook to: ${webhookUrl}`);
+      const webhookToken = process.env.EVOLUTION_WEBHOOK_TOKEN;
+      const tokenQuery = webhookToken ? `?token=${encodeURIComponent(webhookToken)}` : '';
+      const webhookUrl = `${backendHost}/api/whatsapp/webhook${tokenQuery}`;
+      console.log(`[Evolution] Automatically configuring webhook to: ${webhookUrl.replace(/token=[^&]+/, 'token=***')}`);
       
       const webhookRes = await fetch(`${apiUrl}/webhook/set/${instanceName}`, {
         method: 'POST',

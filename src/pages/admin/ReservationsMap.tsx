@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
+import { adminPost, adminPatch, adminDelete } from '../../lib/adminApi';
 import { 
   Anchor, Ship, CalendarCheck, Search, ChevronLeft, ChevronRight, UserPlus, 
   Filter, BellRing, Settings, Landmark, Wallet, Users, Bot, X, Check, 
@@ -173,14 +174,14 @@ export default function ReservationsMap() {
         if (blockCust) {
           finalCustomerId = blockCust.id;
         } else {
-          const { data: newCustomer, error: customerError } = await supabase.from('customers').insert([{
+          const { data: newCustomer, error: customerError } = await adminPost('/api/admin/customers', {
             full_name: 'Bloqueio / Manutenção',
             phone: '00000000000'
-          }]).select().single();
-          
-          if (customerError) {
-            console.error("Erro ao criar cliente para bloqueio:", customerError.message);
-            alert("Erro ao criar cadastro de bloqueio: " + customerError.message);
+          });
+
+          if (customerError || !newCustomer) {
+            console.error("Erro ao criar cliente para bloqueio:", customerError?.message);
+            alert("Erro ao criar cadastro de bloqueio: " + (customerError?.message || ''));
             setIsSaving(false);
             return;
           }
@@ -188,13 +189,13 @@ export default function ReservationsMap() {
           setAllCustomers(prev => [...prev, newCustomer]);
         }
       } else if (!finalCustomerId) {
-        const { data: newCustomer, error: customerError } = await supabase.from('customers').insert([{
+        const { data: newCustomer, error: customerError } = await adminPost('/api/admin/customers', {
           full_name: formData.customer_name || 'Bloqueio / Manutenção',
           phone: formData.customer_phone || '00000000000'
-        }]).select().single();
-        
-        if (customerError) {
-          console.error("Erro ao criar cliente:", customerError.message);
+        });
+
+        if (customerError || !newCustomer) {
+          console.error("Erro ao criar cliente:", customerError?.message);
           alert("Erro ao criar cadastro do cliente.");
           setIsSaving(false);
           return;
@@ -205,13 +206,13 @@ export default function ReservationsMap() {
     } else {
       // If no existing customer selected, create a new one
       if (!finalCustomerId) {
-        const { data: newCustomer, error: customerError } = await supabase.from('customers').insert([{
+        const { data: newCustomer, error: customerError } = await adminPost('/api/admin/customers', {
           full_name: formData.customer_name,
           phone: formData.customer_phone
-        }]).select().single();
-        
-        if (customerError) {
-          console.error("Erro ao criar cliente:", customerError.message);
+        });
+
+        if (customerError || !newCustomer) {
+          console.error("Erro ao criar cliente:", customerError?.message);
           alert("Erro ao criar cadastro do cliente.");
           setIsSaving(false);
           return;
@@ -247,13 +248,13 @@ export default function ReservationsMap() {
 
     const isUpdate = !!formData.id;
     let reservationId = formData.id;
-    let resError = null;
+    let resError: { message: string } | null = null;
 
     if (isUpdate) {
-      const { error } = await supabase.from('reservations').update(payload).eq('id', formData.id);
+      const { error } = await adminPatch(`/api/admin/reservations/${formData.id}`, payload);
       resError = error;
     } else {
-      const { data, error } = await supabase.from('reservations').insert([payload]).select('id').single();
+      const { data, error } = await adminPost<{ id: string }>('/api/admin/reservations', payload);
       if (data) reservationId = data.id;
       resError = error;
     }
@@ -265,12 +266,12 @@ export default function ReservationsMap() {
       const paidDelta = Number(formData.paid_amount) - Number(formData.previous_paid_amount);
       if (paidDelta > 0) {
           const boatName = boats.find(b => b.id === formData.boat_id)?.name || 'Lancha';
-          await supabase.from('cash_transactions').insert([{
+          await adminPost('/api/admin/cash-transactions', {
               type: 'INCOME',
               amount: paidDelta,
               description: `[RESERVA] Pagamento: ${boatName} — Cliente: ${formData.customer_name}`,
               reservation_id: reservationId || null
-          }]);
+          });
       }
 
       await fetchBoatsAndReservations();
@@ -287,7 +288,7 @@ export default function ReservationsMap() {
     }
     
     setIsSaving(true);
-    const { error } = await supabase.from('reservations').delete().eq('id', formData.id);
+    const { error } = await adminDelete(`/api/admin/reservations/${formData.id}`);
     if (error) {
       console.error('Erro ao apagar reserva:', error);
       alert('Erro ao apagar reserva: ' + error.message);
@@ -369,22 +370,18 @@ export default function ReservationsMap() {
       if (!feedbackData.reservationId) return;
 
       // 1. Update reservation status to COMPLETED
-      const { error: resError } = await supabase
-        .from('reservations')
-        .update({ status: 'COMPLETED' })
-        .eq('id', feedbackData.reservationId);
+      const { error: resError } = await adminPatch(`/api/admin/reservations/${feedbackData.reservationId}`, {
+        status: 'COMPLETED'
+      });
       if (resError) throw resError;
 
       // 2. Update customer record (tags, rating_stars, rating_notes)
       if (feedbackData.customerId) {
-        const { error: custError } = await supabase
-          .from('customers')
-          .update({
-            tags: feedbackData.tags,
-            rating_stars: feedbackData.stars,
-            rating_notes: feedbackData.notes
-          })
-          .eq('id', feedbackData.customerId);
+        const { error: custError } = await adminPatch(`/api/admin/customers/${feedbackData.customerId}`, {
+          tags: feedbackData.tags,
+          rating_stars: feedbackData.stars,
+          rating_notes: feedbackData.notes
+        });
         if (custError) throw custError;
 
         // Update local state for allCustomers
