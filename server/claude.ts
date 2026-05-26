@@ -47,6 +47,16 @@ VARIAÇÃO É LEI:
 - Cada resposta deve soar única, do momento. Nada de templates colados.
 - Se um cliente novo manda "oi", a sua boas-vindas é improvisada agora — não copia uma anterior.
 
+NADA DE FORMATAÇÃO (CRÍTICO — VOCÊ ESCREVE COMO HUMANO):
+- NUNCA use asteriscos pra negrito (\`*texto*\`). NUNCA. Pessoa real no WhatsApp não pensa em formatação — só escreve.
+- Não use underline (\`_texto_\`), tachado (\`~texto~\`), nem qualquer markdown. Nem em valores, nem em datas, nem pra destacar nome de lancha.
+- Não use hífens divisórios \`---\` separando blocos. Não é newsletter, é conversa.
+- Quando quiser dar ênfase, use a ORDEM das palavras ou repetição leve, não formatação. Ex:
+  - ❌ "Diária: *R$ 5.000* (saindo de Porto Belo)"
+  - ✅ "A diária dela tá em R$ 5.000 saindo de Porto Belo."
+- Sentence case normal, sem MAIÚSCULAS de ênfase (a não ser excepcionalmente, tipo um "ADOREI" raríssimo).
+- Listas só quando o cliente pede comparativo ou lista mesmo. Senão, prosa.
+
 SAUDAÇÃO CONTEXTUAL (use a HORA ATUAL informada abaixo no contexto):
 - 5h–11h59 → "Bom dia"
 - 12h–17h59 → "Boa tarde"
@@ -261,23 +271,15 @@ Aí você dá espaço: "Sem stress, fica à vontade pra pensar. Tô aqui quando 
 
 # O FECHAMENTO — PIX E COMPROVANTE
 
-Quando o cliente disser que quer fechar, apresente o resumo COMPLETO. Variando a forma, mas com tudo. Exemplo de estrutura (adapte o jeito):
+Quando o cliente disser que quer fechar, apresente o resumo em **prosa fluida**, como se você estivesse anotando ali na hora pra ele. Toda informação tem que estar, mas escrita como gente escreve — sem asteriscos, sem listas com emoji em cada linha, sem aparência de fatura. Estilo de referência (varie a forma cada vez):
 
-> Perfeito, fechado então! Te passo o resumo:
-> 🛥️ Lancha: [Nome]
-> 📅 Data: [Dia/Mês]
-> 📍 Roteiro: [Saída] → [Destino]
-> 💰 Diária: R$ [Valor]
-> 🎁 Extras: [Tapete pago R$300 / Cortesia / Não incluso]
-> ⏰ Horas extras: [Qtd se houver]
-> 💳 Total: R$ [Soma]
-> 📲 Entrada (50%): R$ [Metade]
+> Fechado então, Guilherme! Anotei aqui:
 >
-> Por segurança, recebemos só pelo CNPJ oficial (cuidado com golpes na região, viu? 🙏):
-> PIX — CNPJ: Lanchas Show / Flavieli
-> 39.350.999/0001-34
+> É a Tecnomarine 51 saindo de Porto Belo dia 30/05 (sábado), com roteiro pro Caixa d'Aço. A diária fica em R$ 5.000, sem extras. Pra fechar a gente trabalha com 50% de entrada (R$ 2.500) e o restante até o dia do passeio.
 >
-> Assim que pagar, me manda o comprovante aqui que eu já registro e mando o Termo de Locação ✨
+> Por segurança a gente recebe só pelo CNPJ oficial — golpe nessa região tá feio, viu, então atenção. O PIX é o CNPJ 39.350.999/0001-34 (Lanchas Show / Flavieli).
+>
+> Quando fizer me manda o comprovante aqui que eu já registro e te mando o Termo de Locação 🙏
 
 REGRA CRÍTICA: NÃO chame \`create_pending_reservation\` ao mandar o resumo+PIX. A reserva NÃO entra no banco enquanto o cliente não enviar comprovante.
 
@@ -517,19 +519,57 @@ interface ChatMessage {
   content: any;
 }
 
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
 /**
- * Calls the Anthropic Claude API Messages endpoint.
+ * True for transient errors worth retrying (network blips, rate limits, 5xx).
+ * Hard 4xx errors (bad request, auth, content policy) are NOT retried.
+ */
+function isRetryableClaudeError(err: any): boolean {
+  const status = err?.status ?? err?.response?.status;
+  if (status === 429) return true;          // rate limit
+  if (status >= 500 && status < 600) return true; // server error
+  if (status === 408) return true;          // timeout
+  // Network-level errors don't have HTTP status
+  const code = err?.code || err?.cause?.code;
+  if (code === 'ECONNRESET' || code === 'ETIMEDOUT' || code === 'ECONNREFUSED' || code === 'EAI_AGAIN') return true;
+  if (typeof err?.message === 'string' && /timeout|network|fetch failed/i.test(err.message)) return true;
+  return false;
+}
+
+/**
+ * Calls the Anthropic Claude API Messages endpoint with automatic retry on
+ * transient failures. We try up to 3 times with exponential backoff (1s, 3s).
+ * Total worst-case wait: ~4 seconds — well below the WhatsApp debounce window,
+ * so the client experiences a slightly slower-than-usual reply instead of a
+ * "stability" error message.
+ *
  * temperature: 0.75 for client-facing Isabelle (warm/natural), 0.5 for owners group (operational precision).
  */
 async function callClaudeAPI(system: string, messages: ChatMessage[], tools: any[], temperature = 0.75): Promise<any> {
-  return anthropic.messages.create({
-    model: claudeModel,
-    max_tokens: 4000,
-    system: system,
-    messages: messages,
-    tools: tools,
-    temperature: temperature
-  });
+  const MAX_ATTEMPTS = 3;
+  const backoffMs = [0, 1000, 3000];
+
+  let lastError: any = null;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (backoffMs[attempt] > 0) await sleep(backoffMs[attempt]);
+    try {
+      return await anthropic.messages.create({
+        model: claudeModel,
+        max_tokens: 4000,
+        system: system,
+        messages: messages,
+        tools: tools,
+        temperature: temperature
+      });
+    } catch (err: any) {
+      lastError = err;
+      const status = err?.status ?? err?.response?.status ?? 'unknown';
+      console.warn(`[Claude] API call failed (attempt ${attempt + 1}/${MAX_ATTEMPTS}, status=${status}): ${err?.message || err}`);
+      if (!isRetryableClaudeError(err)) break;
+    }
+  }
+  throw lastError;
 }
 
 /**
@@ -735,8 +775,12 @@ DADOS DO CLIENTE — NÃO PEÇA O QUE JÁ TEM:
 
   throw new Error('Claude exceeded maximum tool call recursion depth.');
   } catch (error: any) {
-    console.error('[Claude] getAiResponse failed:', error);
-    return 'Oi! Estou com uma instabilidade aqui agora 😅 Me manda sua mensagem de novo em instantes, por favor? 🙏';
+    console.error('[Claude] getAiResponse failed after retries:', error);
+    // Silent fail — better to send nothing than to repeatedly send a robotic
+    // "estabilidade" message that breaks the human illusion. The next inbound
+    // client message will trigger a fresh attempt; in the meantime the admin
+    // sees the error in the Railway logs.
+    return '';
   }
 }
 
