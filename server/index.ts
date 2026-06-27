@@ -35,10 +35,7 @@ app.post('/api/asaas/webhook', handleAsaasWebhook);
 app.post('/api/docuseal/webhook', handleDocusealWebhook);
 
 // Evolution API webhook (using wildcard to capture event sub-paths).
-app.post('/api/whatsapp/webhook*', (req, res, next) => {
-  console.log(`[Server] Webhook received: ${req.method} ${req.url}`);
-  next();
-}, handleWhatsAppWebhook);
+app.post('/api/whatsapp/webhook*', handleWhatsAppWebhook);
 
 // ──────────────────────────────────────────────────────────────────
 // Admin authentication

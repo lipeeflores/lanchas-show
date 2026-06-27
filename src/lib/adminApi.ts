@@ -1,6 +1,6 @@
 /**
  * Helpers for authenticated admin API calls. Stores the session token returned
- * by POST /api/admin/login in localStorage and attaches it as a Bearer token
+ * by POST /api/admin/login in sessionStorage and attaches it as a Bearer token
  * to subsequent fetches. On 401 the token is cleared and the user is redirected
  * back to the login screen.
  */
@@ -8,16 +8,16 @@
 const TOKEN_KEY = 'lanchas_show_admin_token';
 
 export function getAdminToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  return sessionStorage.getItem(TOKEN_KEY);
 }
 
 export function setAdminToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token);
+  sessionStorage.setItem(TOKEN_KEY, token);
 }
 
 export function clearAdminSession(): void {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem('lanchas_show_auth');
+  sessionStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem('lanchas_show_auth');
 }
 
 export function isAdminAuthenticated(): boolean {
@@ -36,7 +36,7 @@ export async function adminLogin(username: string, password: string): Promise<{ 
       return { ok: false, error: data.error || 'Credenciais inválidas.' };
     }
     setAdminToken(data.token);
-    localStorage.setItem('lanchas_show_auth', 'true');
+    sessionStorage.setItem('lanchas_show_auth', 'true');
     return { ok: true };
   } catch (err: any) {
     return { ok: false, error: err?.message || 'Falha ao conectar ao servidor.' };

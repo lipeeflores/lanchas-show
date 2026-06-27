@@ -13,25 +13,33 @@ import ClientEvaluation from './pages/ClientEvaluation';
 import EvaluationsDashboard from './pages/admin/EvaluationsDashboard';
 import AdminGuard from './components/AdminGuard';
 import BoatDetails from './pages/BoatDetails';
+import NotFound from './pages/NotFound';
+import PrivacyPolicy from './pages/PrivacyPolicy';
+import TermsOfUse from './pages/TermsOfUse';
+import { ToastProvider } from './components/Toast';
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/lancha/:id" element={<BoatDetails />} />
-        <Route path="/avaliacao" element={<ClientEvaluation />} />
-        <Route path="/admin" element={<Login />} />
-        <Route path="/admin/dashboard" element={<AdminGuard><Dashboard /></AdminGuard>} />
-        <Route path="/admin/reservas" element={<AdminGuard><ReservationsMap /></AdminGuard>} />
-        <Route path="/admin/frota" element={<AdminGuard><FleetManagement /></AdminGuard>} />
-        <Route path="/admin/financeiro" element={<AdminGuard><FinancialDashboard /></AdminGuard>} />
-        <Route path="/admin/clientes" element={<AdminGuard><CustomersDB /></AdminGuard>} />
-        <Route path="/admin/ia" element={<AdminGuard><AICommandCenter /></AdminGuard>} />
-        <Route path="/admin/calendario" element={<AdminGuard><CalendarSettings /></AdminGuard>} />
-        <Route path="/admin/avaliacoes" element={<AdminGuard><EvaluationsDashboard /></AdminGuard>} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </BrowserRouter>
+    <ToastProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/lancha/:id" element={<BoatDetails />} />
+          <Route path="/avaliacao" element={<ClientEvaluation />} />
+          <Route path="/privacidade" element={<PrivacyPolicy />} />
+          <Route path="/termos" element={<TermsOfUse />} />
+          <Route path="/admin" element={<Login />} />
+          <Route path="/admin/dashboard" element={<AdminGuard><Dashboard /></AdminGuard>} />
+          <Route path="/admin/reservas" element={<AdminGuard><ReservationsMap /></AdminGuard>} />
+          <Route path="/admin/frota" element={<AdminGuard><FleetManagement /></AdminGuard>} />
+          <Route path="/admin/financeiro" element={<AdminGuard><FinancialDashboard /></AdminGuard>} />
+          <Route path="/admin/clientes" element={<AdminGuard><CustomersDB /></AdminGuard>} />
+          <Route path="/admin/ia" element={<AdminGuard><AICommandCenter /></AdminGuard>} />
+          <Route path="/admin/calendario" element={<AdminGuard><CalendarSettings /></AdminGuard>} />
+          <Route path="/admin/avaliacoes" element={<AdminGuard><EvaluationsDashboard /></AdminGuard>} />
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </BrowserRouter>
+    </ToastProvider>
   );
 }

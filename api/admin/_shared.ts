@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 
-const RAILWAY = 'https://lanchas-show-production.up.railway.app';
+const RAILWAY = process.env.RAILWAY_URL || 'https://lanchas-show-production.up.railway.app';
 
 export function isValidAdmin(authHeader: string | undefined): boolean {
   if (!authHeader?.startsWith('Bearer ')) return false;

@@ -5,13 +5,16 @@ import path from 'path';
 
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'ADMIN';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'ADMIN';
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || '';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const SESSION_SECRET = process.env.ADMIN_SESSION_SECRET || 'lanchas-show-dev-secret-change-me';
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
+if (!process.env.ADMIN_USERNAME || !process.env.ADMIN_PASSWORD) {
+  console.warn('[Auth] AVISO: ADMIN_USERNAME ou ADMIN_PASSWORD não definidos no .env. Login admin desabilitado.');
+}
 if (SESSION_SECRET === 'lanchas-show-dev-secret-change-me') {
-  console.warn('[Auth] WARNING: ADMIN_SESSION_SECRET not set. Using insecure default. Set it in .env before production.');
+  console.warn('[Auth] AVISO: ADMIN_SESSION_SECRET não definido. Use um segredo forte em produção.');
 }
 
 function timingSafeEqualStr(a: string, b: string): boolean {

@@ -4,8 +4,10 @@ import { Anchor, Ship, CalendarCheck, DollarSign, BellRing, AlertCircle, CheckCi
 import { Link } from 'react-router-dom';
 import { adminGet, adminPost, adminPatch } from '../../lib/adminApi';
 import AdminLayout from '../../components/AdminLayout';
+import { useToast } from '../../components/Toast';
 
 export default function Dashboard() {
+  const { toast } = useToast();
   const [alerts, setAlerts] = useState<any[]>([]);
   const [partnersToApprove, setPartnersToApprove] = useState<any[]>([]);
   const [contractsPending, setContractsPending] = useState<any[]>([]);
@@ -164,8 +166,9 @@ export default function Dashboard() {
           if (err2) throw err2;
 
           setPendingFixedExpenses(prev => prev.filter(p => p.id !== exp.id));
+          toast('success', 'Despesa baixada com sucesso!');
       } catch (err: any) {
-          alert('Erro ao dar baixa: ' + err.message);
+          toast('error', 'Erro ao dar baixa: ' + err.message);
       }
   };
 
@@ -178,9 +181,9 @@ export default function Dashboard() {
               setPartnersToApprove(prev => prev.filter(r => r.id !== id));
               setContractsPending(prev => [{ ...res, status: 'PENDING_CONTRACT' }, ...prev]);
           }
-          alert('Parceiro aprovado! Reserva enviada para fase de contratos.');
+          toast('success', 'Parceiro aprovado! Reserva enviada para fase de contratos.');
       } catch (err: any) {
-          alert('Erro ao aprovar: ' + err.message);
+          toast('error', 'Erro ao aprovar: ' + err.message);
       }
   };
 
@@ -189,8 +192,9 @@ export default function Dashboard() {
           const { error } = await adminPatch(`/api/admin/reservations/${id}`, { status: 'CONFIRMED' });
           if (error) throw error;
           setContractsPending(prev => prev.filter(r => r.id !== id));
+          toast('success', 'Contrato confirmado com sucesso!');
       } catch (err: any) {
-          alert('Erro ao confirmar contrato: ' + err.message);
+          toast('error', 'Erro ao confirmar contrato: ' + err.message);
       }
   };
 
@@ -199,10 +203,10 @@ export default function Dashboard() {
   const handleGenerateContract = async (res: any) => {
       const { data: customer } = await adminGet<any>(`/api/admin/customers?id=${res.customer_id}`);
       if (customer) res.customers = customer;
-      
+
       const c = res.customers;
       if (!c.document_cpf || !c.document_rg || !c.address) {
-          alert(`Faltam dados do cliente (${c?.full_name || 'Desconhecido'}) para gerar o contrato. Vá em "Clientes CRM" e preencha CPF, RG e Endereço completo.`);
+          toast('error', `Faltam dados do cliente (${c?.full_name || 'Desconhecido'}) para gerar o contrato. Vá em "Clientes CRM" e preencha CPF, RG e Endereço completo.`);
           return;
       }
       setContractData(res);
