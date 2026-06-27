@@ -98,6 +98,11 @@ export async function adminPut<T = any>(url: string, body: any = {}): Promise<Ad
   return parseResult<T>(res);
 }
 
+export async function adminGet<T = any>(url: string): Promise<AdminResult<T>> {
+  const res = await adminFetch(url, { method: 'GET' });
+  return parseResult<T>(res);
+}
+
 export async function adminDelete<T = any>(url: string): Promise<AdminResult<T>> {
   const res = await adminFetch(url, { method: 'DELETE' });
   return parseResult<T>(res);

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { supabase } from '../../lib/supabase';
+import { adminGet } from '../../lib/adminApi';
 import { Ship, CalendarCheck, TrendingUp, TrendingDown, DollarSign, Wallet, Activity, Users, Landmark, Bot, Settings, BarChart3, PieChart as PieIcon, ArrowUpRight, ArrowDownRight, Minus, Star } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../components/AdminLayout';
@@ -24,10 +24,12 @@ export default function FinancialDashboard() {
 
   useEffect(() => {
     const fetchFinance = async () => {
-      const { data: txData } = await supabase.from('cash_transactions').select('*').order('created_at', { ascending: false });
-      const { data: resData } = await supabase.from('reservations').select('*, boats(*), customers(full_name)');
-      if(txData) setAllTxData(txData);
-      if(resData) setAllResData(resData);
+      const [txResult, resResult] = await Promise.all([
+        adminGet<any[]>('/api/admin/cash-transactions'),
+        adminGet<any[]>('/api/admin/reservations')
+      ]);
+      if (txResult.data) setAllTxData(txResult.data);
+      if (resResult.data) setAllResData(resResult.data);
       setLoading(false);
     };
     fetchFinance();
@@ -245,7 +247,7 @@ export default function FinancialDashboard() {
         {loading ? (
            <div className="p-10 text-center text-yellow-500 animate-pulse">Compilando balancetes...</div>
         ) : (
-          <div className="p-6 max-w-7xl mx-auto space-y-6">
+          <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
             
             {/* KPI Cards Row */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -342,31 +344,31 @@ export default function FinancialDashboard() {
                   <h2 className="font-bold text-white uppercase tracking-wider text-sm flex items-center gap-2"><Activity className="w-4 h-4 text-yellow-500"/>Demonstração do Resultado (DRE)</h2>
                 </div>
                 <div className="divide-y divide-slate-800">
-                  <div className="flex justify-between items-center px-6 py-4">
+                  <div className="flex justify-between items-center px-3 sm:px-6 py-4 gap-2">
                     <span className="text-sm text-gray-300 font-medium">(+) Receita Bruta Frota Própria</span>
                     <span className="text-sm font-bold text-green-500">{fmtFull(receitaBruta)}</span>
                   </div>
-                  <div className="flex justify-between items-center px-6 py-4">
+                  <div className="flex justify-between items-center px-3 sm:px-6 py-4 gap-2">
                     <span className="text-sm text-gray-300 font-medium">(+) Lucro Intermediação Parceiros</span>
                     <span className="text-sm font-bold text-green-500">{fmtFull(lucroIntermediacao)}</span>
                   </div>
-                  <div className="flex justify-between items-center px-6 py-4 bg-green-500/5">
+                  <div className="flex justify-between items-center px-3 sm:px-6 py-4 gap-2 bg-green-500/5">
                     <span className="text-sm text-green-400 font-bold">(=) RECEITA TOTAL</span>
                     <span className="text-sm font-bold text-green-400">{fmtFull(receitaBruta + lucroIntermediacao)}</span>
                   </div>
-                  <div className="flex justify-between items-center px-6 py-4">
+                  <div className="flex justify-between items-center px-3 sm:px-6 py-4 gap-2">
                     <span className="text-sm text-gray-300 font-medium">(−) Custos de Saída (Pier, Marinheiro)</span>
                     <span className="text-sm font-bold text-red-500">-{fmtFull(custosSaida)}</span>
                   </div>
-                  <div className="flex justify-between items-center px-6 py-4 bg-yellow-500/5">
+                  <div className="flex justify-between items-center px-3 sm:px-6 py-4 gap-2 bg-yellow-500/5">
                     <span className="text-sm text-yellow-400 font-bold">(=) LUCRO BRUTO</span>
                     <span className="text-sm font-bold text-yellow-400">{fmtFull(receitaBruta + lucroIntermediacao - custosSaida)}</span>
                   </div>
-                  <div className="flex justify-between items-center px-6 py-4">
+                  <div className="flex justify-between items-center px-3 sm:px-6 py-4 gap-2">
                     <span className="text-sm text-gray-300 font-medium">(−) Despesas Operacionais</span>
                     <span className="text-sm font-bold text-red-500">-{fmtFull(despesasOperacionais)}</span>
                   </div>
-                  <div className={`flex justify-between items-center px-6 py-5 ${lucroLiquido + lucroIntermediacao >= 0 ? 'bg-green-500/10' : 'bg-red-500/10'}`}>
+                  <div className={`flex justify-between items-center px-3 sm:px-6 py-5 gap-2 ${lucroLiquido + lucroIntermediacao >= 0 ? 'bg-green-500/10' : 'bg-red-500/10'}`}>
                     <span className={`text-base font-bold ${lucroLiquido + lucroIntermediacao >= 0 ? 'text-green-400' : 'text-red-400'}`}>(=) LUCRO LÍQUIDO</span>
                     <span className={`text-lg font-bold ${lucroLiquido + lucroIntermediacao >= 0 ? 'text-green-400' : 'text-red-400'}`}>{fmtFull(lucroLiquido + lucroIntermediacao)}</span>
                   </div>

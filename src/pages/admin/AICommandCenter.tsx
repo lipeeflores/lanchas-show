@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { supabase } from '../../lib/supabase';
-import { adminFetch, adminPatch } from '../../lib/adminApi';
+import { adminGet, adminFetch, adminPatch } from '../../lib/adminApi';
 import { Anchor, Ship, CalendarCheck, Bot, MessageCircle, Shield, ShieldOff, Send, Image, CheckCircle, Clock, Landmark, Wallet, Users, Megaphone, Tag, Star, AlertTriangle, RefreshCw, ArrowLeft, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../components/AdminLayout';
@@ -58,105 +57,57 @@ export default function AICommandCenter() {
     }
   };
 
-  // Fetch initial conversations and campaigns
+  const initialConvSelectedRef = useRef(false);
+
+  // Fetch + poll conversations and campaigns
   useEffect(() => {
-    const fetchData = async () => {
-      const { data: convData } = await supabase
-        .from('ia_conversations')
-        .select('*')
-        .order('created_at', { ascending: false });
-      if (convData) {
-        setConversations(convData);
-        if (convData.length > 0 && !selectedConvId) {
-          if (window.innerWidth >= 768) {
-            setSelectedConvId(convData[0].id);
-          }
+    const fetchCampaigns = async () => {
+      const { data } = await adminGet<any[]>('/api/admin/ia-campaigns');
+      if (data) setCampaigns(data);
+    };
+
+    const pollConversations = async () => {
+      const { data } = await adminGet<any[]>('/api/admin/ia-conversations');
+      if (data) {
+        setConversations(data);
+        if (!initialConvSelectedRef.current && data.length > 0) {
+          initialConvSelectedRef.current = true;
+          if (window.innerWidth >= 768) setSelectedConvId(data[0].id);
         }
       }
+    };
 
-      const { data: campData } = await supabase
-        .from('ia_campaigns')
-        .select('*')
-        .order('created_at', { ascending: false });
-      if (campData) setCampaigns(campData);
-
+    const init = async () => {
+      await Promise.all([pollConversations(), fetchCampaigns()]);
       setLoading(false);
     };
-    fetchData();
+    init();
+
+    const convInterval = setInterval(pollConversations, 5000);
 
     checkWhatsAppConnection();
-    const waInterval = setInterval(() => {
-      checkWhatsAppConnection();
-    }, 15000); // Check every 15 seconds
-
-    return () => clearInterval(waInterval);
-  }, []);
-
-  // Supabase Realtime subscription for ia_conversations
-  useEffect(() => {
-    const conversationsChannel = supabase
-      .channel('schema-db-changes-conversations')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'ia_conversations' },
-        (payload) => {
-          console.log('Realtime conversation change:', payload);
-          if (payload.eventType === 'INSERT') {
-            setConversations(prev => {
-              if (prev.some(c => c.id === payload.new.id)) return prev;
-              return [payload.new, ...prev];
-            });
-          } else if (payload.eventType === 'UPDATE') {
-            setConversations(prev => prev.map(c => c.id === payload.new.id ? payload.new : c));
-          } else if (payload.eventType === 'DELETE') {
-            setConversations(prev => prev.filter(c => c.id !== payload.old.id));
-          }
-        }
-      )
-      .subscribe();
+    const waInterval = setInterval(checkWhatsAppConnection, 15000);
 
     return () => {
-      supabase.removeChannel(conversationsChannel);
+      clearInterval(convInterval);
+      clearInterval(waInterval);
     };
   }, []);
 
-  // Fetch messages and subscribe to Realtime for selected conversation
+  // Poll messages for the selected conversation
   useEffect(() => {
     if (!selectedConvId) return;
 
-    const fetchMessages = async () => {
-      const { data } = await supabase
-        .from('ia_messages')
-        .select('*')
-        .eq('conversation_id', selectedConvId)
-        .order('created_at', { ascending: true });
+    const pollMessages = async () => {
+      const { data } = await adminGet<any[]>(
+        `/api/admin/ia-messages?conversation_id=${selectedConvId}`
+      );
       if (data) setMessages(data);
     };
-    fetchMessages();
 
-    const messagesChannel = supabase
-      .channel(`messages-${selectedConvId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'ia_messages',
-          filter: `conversation_id=eq.${selectedConvId}`
-        },
-        (payload) => {
-          console.log('Realtime message insert:', payload);
-          setMessages(prev => {
-            if (prev.some(m => m.id === payload.new.id)) return prev;
-            return [...prev, payload.new];
-          });
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(messagesChannel);
-    };
+    pollMessages();
+    const interval = setInterval(pollMessages, 3000);
+    return () => clearInterval(interval);
   }, [selectedConvId]);
 
   // Scroll to bottom when messages update

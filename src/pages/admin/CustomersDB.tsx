@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { supabase } from '../../lib/supabase';
-import { adminPatch } from '../../lib/adminApi';
+import { adminGet, adminPatch } from '../../lib/adminApi';
 import { Anchor, Ship, CalendarCheck, Users, Search, Download, Landmark, Wallet, Tag, Bot, Settings, Star } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../components/AdminLayout';
@@ -15,12 +14,8 @@ export default function CustomersDB() {
 
   useEffect(() => {
     const fetchCustomers = async () => {
-      // Fetch customers with their reservations to calculate LTV dynamically based on DB reality
-      const { data } = await supabase
-        .from('customers')
-        .select('*, reservations(total_price)')
-        .order('created_at', { ascending: false });
-        
+      const { data } = await adminGet<any[]>('/api/admin/customers');
+
       if(data) {
           const mapped = data.map(c => {
              const rentals = c.reservations?.length || 0;
@@ -111,7 +106,7 @@ export default function CustomersDB() {
         {loading ? (
              <div className="p-10 text-center text-yellow-500 animate-pulse">Carregando CRM...</div>
         ) : (
-          <div className="p-6 max-w-7xl mx-auto space-y-6">
+          <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
              
              {/* Top 3 Clientes */}
              {customers.filter(c => c.rentals > 0).length > 0 && (

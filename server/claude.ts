@@ -1191,6 +1191,7 @@ export async function getOwnersGroupResponse(
 # INTERPRETAÇÃO DE DATAS RELATIVAS
 Quando os donos falarem "amanhã", "sexta", "dia 25", "semana que vem", calcule a data ABSOLUTA tomando como base hoje (${currentDate}). Passe sempre no formato YYYY-MM-DD pras ferramentas.${pendingQuestionsContext}`;
 
+  try {
   while (depth < maxDepth) {
     depth++;
     console.log(`[Claude Owners Group] Calling messages loop. Depth: ${depth}`);
@@ -1240,7 +1241,6 @@ Quando os donos falarem "amanhã", "sexta", "dia 25", "semana que vem", calcule 
           } else if (toolName === 'answer_client_question') {
             try {
               const { supabaseAdmin: supa } = await import('./supabase');
-              const { getAiResponse: aiResp } = await import('./claude');
               const { sendWhatsAppMessage: sendMsg } = await import('./evolution');
 
               // 1. Find the client conversation
@@ -1264,7 +1264,7 @@ Quando os donos falarem "amanhã", "sexta", "dia 25", "semana que vem", calcule 
                 const chronologicalHistory = (clientHistory || []).reverse();
 
                 // 3. Call Claude to formulate the response to the client
-                const clientResponse = await aiResp(
+                const clientResponse = await getAiResponse(
                   clientConv.id,
                   chronologicalHistory,
                   clientConv.contact_name,
@@ -1334,6 +1334,10 @@ Quando os donos falarem "amanhã", "sexta", "dia 25", "semana que vem", calcule 
   }
 
   throw new Error('Claude Owners Group exceeded maximum tool call recursion depth.');
+  } catch (error: any) {
+    console.error('[Claude Owners] getOwnersGroupResponse failed:', error);
+    return '';
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -1389,15 +1393,70 @@ export async function generateFollowUpMessage(
 
   // Instruction map — each kind has its own private brief.
   const kindBriefs: Record<FollowUpKind, string> = {
-    tier1_geral: 'Cliente ficou em silêncio ~30 min depois de você ter respondido/cotado. PRIMEIRO follow-up: leve, casual, curiosa. Pergunte como ficou a decisão, se ficou alguma dúvida. Curto (1-2 frases). Não use senso de urgência forte ainda.',
-    tier2_geral: 'Cliente continua em silêncio depois do primeiro follow-up (~3h). SEGUNDO follow-up: tom de "ainda estou aqui pra ajudar", talvez ofereça flexibilizar algo (mudar barco, ajustar grupo) ou pergunte se prefere falar por ligação rápida. Não desespere, mas mostre que existem outras pessoas interessadas na data.',
-    tier3_geral: 'Cliente sumiu há mais de 18h depois de dois follow-ups. TERCEIRO follow-up: último contato gentil. Tom de "se ainda quiser, me avisa hoje". Pode oferecer condição especial só pra ele se ainda fizer sentido. Não soa desesperada.',
-    tier1_sinal: 'Cliente recebeu o resumo+PIX e ficou em silêncio ~30 min. PRIMEIRO follow-up: lembre que a data ainda está bloqueada por pouco tempo. Pergunte se conseguiu fazer o PIX ou se precisou de algo.',
-    tier2_sinal: 'Cliente em silêncio ~3h depois do primeiro lembrete de PIX. SEGUNDO follow-up: ofereça facilidade de pagamento (link, parcelamento) ou pergunte se está pensando em outra data. A data está sob pressão de outros clientes.',
-    tier3_sinal: 'Cliente sumiu mais de 18h depois do PIX pedido + 2 lembretes. ÚLTIMO follow-up amigável: precisa liberar a data hoje. Pergunte uma vez se ainda quer manter a reserva, deixa claro que se não responder vai liberar pra outros.',
-    pix_4h: 'Já se passaram 4h desde que o cliente disse que ia pagar o PIX, mas comprovante ainda não chegou. Pergunte com leveza se conseguiu fazer o sinal, oferece ajuda se houve algum problema. Curtinho.',
-    pix_24h: 'Faz 24h e o cliente nunca mandou comprovante de PIX. Tom: "ainda dá pra reservar, mas tenho que confirmar logo". Pergunte se ainda tem interesse na data e oferece alternativa se quiserem remarcar.',
-    same_day_9am: 'O passeio do cliente é HOJE (' + (targetDate || 'hoje') + ') mas ele ainda não fechou. Lembre que a saída oficial é às 10h e que ainda dá tempo de garantir. Tom animado, oportunidade.'
+    tier1_geral: `SITUAÇÃO: Você cotou/respondeu e o cliente ficou em silêncio por ~30 min. É o PRIMEIRO toque.
+OBJETIVO: Reabrir o canal de forma natural e curiosa, sem qualquer pressão.
+TÉCNICA: Use Label de emoção ou pergunta calibrada curta. Exemplos de abordagem (NÃO copie literalmente, adapte ao tom da conversa):
+  - "sei que às vezes a gente precisa de um minutinho pra alinhar com o grupo..."
+  - "ficou alguma coisa sem resposta?"
+  - Se souber a data de interesse pelo histórico, pode citar levemente: "aquela data de [data] ainda tá disponível aqui".
+MENSAGEM: 1 a 2 linhas. Casual, sem cobrar decisão. ZERO urgência.`,
+
+    tier2_geral: `SITUAÇÃO: Primeiro follow-up sem resposta. Já ~3h desde o último contato da IA. SEGUNDO toque.
+OBJETIVO: Criar movimento — mostrar que a data tem vida, sem inventar escassez falsa.
+TÉCNICA: Loss aversion leve + pergunta calibrada que abre saída alternativa.
+  - Se souber pelo histórico o barco/data de interesse, mencione: "a [barco] nessa data começa a ter movimentação..."
+  - Abra alternativa: "se preferirem ajustar alguma coisa — grupo, data, barco — me fala que vejo aqui."
+  - Pode oferecer canal alternativo: "se for mais fácil resolver por ligação rápida, me fala também."
+MENSAGEM: 2 a 3 linhas. Tom prestativo, não desesperado.`,
+
+    tier3_geral: `SITUAÇÃO: Cliente sumiu depois de dois follow-ups, mais de 18h de silêncio. ÚLTIMO contato.
+OBJETIVO: Criar prazo real e concreto. Saída honrosa ou fechamento.
+TÉCNICA: Assumptive close + escassez honesta. Exemplos de estrutura:
+  - "Vou precisar liberar essa data nos próximos dias — tenho outros grupos aguardando. Se ainda quiser garantir, me avisa até hoje."
+  - Se pelo histórico a lancha for frota própria e tapete disponível: ofereça tapete flutuante cortesia como isca final.
+  - Encerre com porta de saída digna: "se o plano mudou, sem problema — é só me falar 🙏"
+MENSAGEM: 2 linhas. TOM: firme, caloroso, definitivo. Soa como "última chance real", não ameaça.`,
+
+    tier1_sinal: `SITUAÇÃO: Cliente recebeu o resumo + chave PIX mas não mandou comprovante (~30 min). PRIMEIRO lembrete.
+OBJETIVO: Checar se houve dificuldade prática com o PIX, sem soar cobrando.
+TÉCNICA: Empatia + oferta de ajuda prática.
+  - "O PIX foi pra você certinho? Às vezes o CNPJ demora um tempinho pra processar nos apps."
+  - Pode reconfirmar a chave: "o PIX é pro CNPJ 39.350.999/0001-34 (Lanchas Show / Flavieli)."
+MENSAGEM: 1 frase. Levíssimo, prestativo.`,
+
+    tier2_sinal: `SITUAÇÃO: Ainda sem comprovante ~3h depois do primeiro lembrete de PIX. SEGUNDO lembrete.
+OBJETIVO: Urgência REAL e honesta sobre a data. Criar prazo concreto.
+TÉCNICA: Loss aversion direto + saída alternativa.
+  - "A data ainda está reservada pra você, mas precisaria confirmar até hoje — já tenho outro grupo esperando essa mesma data."
+  - Abra saída: "se precisar remarcar ou ajustar alguma coisa, me fala antes que a gente resolve."
+MENSAGEM: 2 linhas. Gentil com prazo real.`,
+
+    tier3_sinal: `SITUAÇÃO: Mais de 18h sem comprovante depois de dois lembretes. ÚLTIMO aviso antes de liberar a data.
+OBJETIVO: Resolver ou liberar a data — sem mais ambiguidade.
+TÉCNICA: Clareza total + porta de saída digna.
+  - "Preciso de uma confirmação ainda hoje ou vou precisar liberar essa data — não quero te perder mas já não consigo segurar mais."
+  - "Se ainda quiser, manda o comprovante agora. Se o plano mudou, me fala que não tem problema nenhum 🙏"
+MENSAGEM: 1 a 2 frases. TOM: definitivo mas sem hostilidade. É o encerramento.`,
+
+    pix_4h: `SITUAÇÃO: O cliente disse que ia pagar o PIX mas comprovante não chegou em 4h.
+OBJETIVO: Checar sem soar cobrando — pode ter sido erro técnico.
+TÉCNICA: Curiosidade genuína + oferta de ajuda prática.
+  - "Oi! Só pra confirmar — o PIX chegou a ser feito? Às vezes tranca no app ou dá erro no CNPJ."
+  - Se conveniente, confirme a chave: "o PIX é pro CNPJ 39.350.999/0001-34 (Lanchas Show / Flavieli)."
+MENSAGEM: 1 linha. Tom de quem quer ajudar, não cobrar.`,
+
+    pix_24h: `SITUAÇÃO: 24h depois da solicitação + primeiro lembrete, ainda sem comprovante.
+OBJETIVO: Prazo concreto hoje ou abertura para remarcação.
+TÉCNICA: Prazo + alternativa direta.
+  - "Ainda dá tempo de garantir a data, mas precisaria da confirmação hoje. Se o plano mudou por algum motivo, me fala que a gente vê outra data sem problema 😊."
+MENSAGEM: 2 linhas. Simples, direto, sem drama.`,
+
+    same_day_9am: `SITUAÇÃO: O passeio do cliente é HOJE (${targetDate || 'hoje'}) mas ainda não fechou/confirmou.
+OBJETIVO: Converter com urgência real do dia. Energia alta.
+TÉCNICA: Scarcity real (saída é às 10h, o tempo é agora) + assumptive close.
+  - Se for negociação em andamento: "Bom dia! A saída é às 10h — ainda dá tempo de garantir pra hoje! 🛥️ Me confirma agora?"
+  - Se a situação for mais avançada (tinha pedido PIX): "Bom dia! Tô confirmando a saída de hoje — deu pra fazer o sinal?"
+MENSAGEM: 1 a 2 linhas. Animada, urgente, direta.`
   };
 
   const followUpInstruction = `# INSTRUÇÃO INTERNA DO SISTEMA (CLIENTE NÃO VÊ ISTO)

@@ -94,6 +94,189 @@ const ROUTE_FIELDS = [
 // ──────────────────────────────────────────────────────────────────
 
 export function registerAdminRoutes(app: Express): void {
+
+  // ════════════════════════════════════════════════════════════════
+  // READ endpoints
+  // ════════════════════════════════════════════════════════════════
+
+  app.get('/api/admin/system-alerts', asyncRoute(async (req, res) => {
+    const { data, error } = await supabaseAdmin
+      .from('system_alerts')
+      .select('*')
+      .eq('is_active', true)
+      .order('created_at', { ascending: false });
+    if (error) { sendError(res, 400, error.message); return; }
+    res.json({ success: true, data });
+  }));
+
+  app.get('/api/admin/customers', asyncRoute(async (req, res) => {
+    const { id, search } = req.query as Record<string, string>;
+    if (id) {
+      const { data, error } = await supabaseAdmin
+        .from('customers').select('*').eq('id', id).single();
+      if (error) { sendError(res, 404, error.message); return; }
+      res.json({ success: true, data });
+      return;
+    }
+    let query = supabaseAdmin
+      .from('customers')
+      .select('*, reservations(total_price)')
+      .order('created_at', { ascending: false });
+    if (search) {
+      query = query.or(
+        `full_name.ilike.%${search}%,phone.ilike.%${search}%,email.ilike.%${search}%,document_cpf.ilike.%${search}%`
+      );
+    }
+    const { data, error } = await query;
+    if (error) { sendError(res, 400, error.message); return; }
+    res.json({ success: true, data });
+  }));
+
+  app.get('/api/admin/reservations', asyncRoute(async (req, res) => {
+    const { start, end, month, year } = req.query as Record<string, string>;
+    let query = supabaseAdmin
+      .from('reservations')
+      .select('*, boats(id, name, owner_type, partners(name)), customers(full_name, phone, tags, rating_stars, rating_notes)')
+      .order('start_date', { ascending: false });
+    if (month && year) {
+      query = query.like('start_date', `${year}-${month.padStart(2, '0')}%`);
+    } else {
+      if (start) query = query.gte('start_date', start);
+      if (end) query = query.lte('start_date', end);
+    }
+    const { data, error } = await query;
+    if (error) { sendError(res, 400, error.message); return; }
+    res.json({ success: true, data });
+  }));
+
+  app.get('/api/admin/cash-transactions', asyncRoute(async (req, res) => {
+    const { data, error } = await supabaseAdmin
+      .from('cash_transactions')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) { sendError(res, 400, error.message); return; }
+    res.json({ success: true, data });
+  }));
+
+  app.get('/api/admin/boats', asyncRoute(async (req, res) => {
+    const { data, error } = await supabaseAdmin
+      .from('boats')
+      .select('*, partners(name, management_level, bank_account_info, contact_phone), boat_expenses(*)')
+      .order('name');
+    if (error) { sendError(res, 400, error.message); return; }
+    res.json({ success: true, data });
+  }));
+
+  app.get('/api/admin/boats/:id/routes', asyncRoute(async (req, res) => {
+    const { id } = req.params;
+    const { data, error } = await supabaseAdmin
+      .from('boat_routes_pricing').select('*').eq('boat_id', id);
+    if (error) { sendError(res, 400, error.message); return; }
+    res.json({ success: true, data });
+  }));
+
+  app.get('/api/admin/partners', asyncRoute(async (req, res) => {
+    const { data, error } = await supabaseAdmin
+      .from('partners')
+      .select('id, name, phone, contact_phone, bank_account_info, management_level, ical_url')
+      .order('name');
+    if (error) { sendError(res, 400, error.message); return; }
+    res.json({ success: true, data });
+  }));
+
+  app.get('/api/admin/accounts-payable', asyncRoute(async (req, res) => {
+    const { status } = req.query as Record<string, string>;
+    let query = supabaseAdmin
+      .from('accounts_payable')
+      .select('*, partners(name)')
+      .order('due_date');
+    if (status) query = query.eq('status', status);
+    const { data, error } = await query;
+    if (error) { sendError(res, 400, error.message); return; }
+    res.json({ success: true, data });
+  }));
+
+  app.get('/api/admin/boat-expenses', asyncRoute(async (req, res) => {
+    const { limit } = req.query as Record<string, string>;
+    let query = supabaseAdmin
+      .from('boat_expenses')
+      .select('*, boats(name)')
+      .order('date', { ascending: false });
+    if (limit) query = query.limit(parseInt(limit, 10));
+    const { data, error } = await query;
+    if (error) { sendError(res, 400, error.message); return; }
+    res.json({ success: true, data });
+  }));
+
+  app.get('/api/admin/ia-conversations', asyncRoute(async (req, res) => {
+    const { since } = req.query as Record<string, string>;
+    let query = supabaseAdmin
+      .from('ia_conversations')
+      .select('*')
+      .order('last_message_at', { ascending: false });
+    if (since) query = query.gte('created_at', since);
+    const { data, error } = await query;
+    if (error) { sendError(res, 400, error.message); return; }
+    res.json({ success: true, data });
+  }));
+
+  app.get('/api/admin/ia-messages', asyncRoute(async (req, res) => {
+    const { conversation_id, since } = req.query as Record<string, string>;
+    if (!conversation_id && !since) {
+      sendError(res, 400, 'conversation_id ou since é obrigatório');
+      return;
+    }
+    let query = supabaseAdmin
+      .from('ia_messages')
+      .select('*')
+      .order('created_at');
+    if (conversation_id) query = query.eq('conversation_id', conversation_id);
+    if (since) query = query.gte('created_at', since);
+    const { data, error } = await query;
+    if (error) { sendError(res, 400, error.message); return; }
+    res.json({ success: true, data });
+  }));
+
+  app.get('/api/admin/ia-campaigns', asyncRoute(async (req, res) => {
+    const { data, error } = await supabaseAdmin
+      .from('ia_campaigns')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) { sendError(res, 400, error.message); return; }
+    res.json({ success: true, data });
+  }));
+
+  app.get('/api/admin/evaluations', asyncRoute(async (req, res) => {
+    const { data, error } = await supabaseAdmin
+      .from('evaluations')
+      .select('*, boats(name)')
+      .order('created_at', { ascending: false });
+    if (error) { sendError(res, 400, error.message); return; }
+    res.json({ success: true, data });
+  }));
+
+  app.delete('/api/admin/evaluations/:id', asyncRoute(async (req, res) => {
+    const { id } = req.params;
+    const { error } = await supabaseAdmin
+      .from('evaluations').delete().eq('id', id);
+    if (error) { sendError(res, 400, error.message); return; }
+    res.json({ success: true });
+  }));
+
+  app.get('/api/admin/contratos-template', asyncRoute(async (req, res) => {
+    const { data, error } = await supabaseAdmin
+      .from('contratos_template')
+      .select('html_content')
+      .eq('id', 'default')
+      .single();
+    if (error) { sendError(res, 404, error.message); return; }
+    res.json({ success: true, data });
+  }));
+
+  // ════════════════════════════════════════════════════════════════
+  // WRITE endpoints
+  // ════════════════════════════════════════════════════════════════
+
   // ── ia_campaigns ────────────────────────────────────────────────
   app.patch('/api/admin/ia-campaigns/:id/approve', asyncRoute(async (req, res) => {
     const { id } = req.params;

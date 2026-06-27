@@ -110,7 +110,8 @@ export async function checkBoatAvailability(dateStr: string, includeBooked = fal
     const { data: activeResDetail } = await supabaseAdmin
       .from('reservations')
       .select('start_date, end_date, tapete_status, boats(owner_type)')
-      .not('status', 'in', '("CANCELLED","NO_SHOW")');
+      .not('status', 'in', '("CANCELLED","NO_SHOW")')
+      .like('start_date', `${dateStr}%`);
 
     if (activeResDetail) {
       const hasBookedTapete = activeResDetail.some((res: any) => {
@@ -844,6 +845,14 @@ export async function getReservationsSummary(filters: {
       query = query.not('status', 'in', '("CANCELLED","NO_SHOW")');
     }
 
+    // Apply date filters in SQL before the limit to avoid truncated results
+    if (filters.date) {
+      query = query.like('start_date', `${filters.date}%`);
+    } else {
+      if (filters.date_from) query = query.gte('start_date', `${filters.date_from}T00:00:00`);
+      if (filters.date_to) query = query.lte('start_date', `${filters.date_to}T23:59:59`);
+    }
+
     const { data: reservations, error } = await query.limit(50);
     if (error) throw error;
 
@@ -862,17 +871,6 @@ export async function getReservationsSummary(filters: {
       passengers: r.passenger_count,
       notes: r.notes
     }));
-
-    // Filter by date
-    if (filters.date) {
-      results = results.filter(r => r.date === filters.date);
-    }
-    if (filters.date_from) {
-      results = results.filter(r => r.date && r.date >= filters.date_from!);
-    }
-    if (filters.date_to) {
-      results = results.filter(r => r.date && r.date <= filters.date_to!);
-    }
 
     // Filter by client name
     if (filters.client_name) {

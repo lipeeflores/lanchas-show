@@ -2,8 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { Anchor, Ship, CalendarCheck, DollarSign, BellRing, AlertCircle, CheckCircle, Clock, Landmark, Wallet, Users, Bot, Settings, Star } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { supabase } from '../../lib/supabase';
-import { adminPost, adminPatch } from '../../lib/adminApi';
+import { adminGet, adminPost, adminPatch } from '../../lib/adminApi';
 import AdminLayout from '../../components/AdminLayout';
 
 export default function Dashboard() {
@@ -23,24 +22,15 @@ export default function Dashboard() {
 
   useEffect(() => {
     const fetchDashboardData = async () => {
-        // Fetch System Alerts
-        const { data: alertsData } = await supabase
-            .from('system_alerts')
-            .select('*')
-            .order('created_at', { ascending: false })
-            .limit(5);
-        setAlerts(alertsData || []);
-
-        // Fetch Fixed Expenses and Payments
-        const { data: fixedExpenses } = await supabase
-            .from('boat_expenses')
-            .select('*, boats(name)')
-            .eq('type', 'FIXED');
-            
-        const { data: payableData } = await supabase
-            .from('accounts_payable')
-            .select('*')
-            .not('boat_expense_id', 'is', null);
+        // Fetch System Alerts, Expenses, Payable in parallel
+        const [alertsResult, expensesResult, payableResult] = await Promise.all([
+            adminGet<any[]>('/api/admin/system-alerts'),
+            adminGet<any[]>('/api/admin/boat-expenses'),
+            adminGet<any[]>('/api/admin/accounts-payable'),
+        ]);
+        setAlerts((alertsResult.data || []).slice(0, 5));
+        const fixedExpenses = (expensesResult.data || []).filter((e: any) => e.type === 'FIXED');
+        const payableData = (payableResult.data || []).filter((p: any) => p.boat_expense_id != null);
 
         if (fixedExpenses) {
             const today = new Date();
@@ -79,10 +69,8 @@ export default function Dashboard() {
         }
 
         // Fetch Reservations for metrics
-        const { data: resData } = await supabase
-            .from('reservations')
-            .select('*, boats(name, owner_type, partners(name)), customers(full_name)');
-            
+        const { data: resData } = await adminGet<any[]>('/api/admin/reservations');
+
         if(resData) {
             const now = new Date();
             const tomorrow = new Date(now);
@@ -106,18 +94,16 @@ export default function Dashboard() {
               const startOfToday = new Date();
               startOfToday.setHours(0, 0, 0, 0);
 
-              const { data: convsData } = await supabase
-                  .from('ia_conversations')
-                  .select('id, created_at')
-                  .in('stage', ['novo', 'cotado', 'sinal_solicitado', 'pix_enviado']);
+              const [convsResult, msgResult] = await Promise.all([
+                adminGet<any[]>('/api/admin/ia-conversations'),
+                adminGet<any[]>(`/api/admin/ia-messages?since=${startOfToday.toISOString()}`),
+              ]);
+              const convsData = (convsResult.data || []).filter(
+                (c: any) => ['novo', 'cotado', 'sinal_solicitado', 'pix_enviado'].includes(c.stage)
+              );
+              const msgData = (msgResult.data || []).filter((m: any) => m.sender === 'CLIENT');
 
-              const { data: msgData } = await supabase
-                  .from('ia_messages')
-                  .select('conversation_id')
-                  .gte('created_at', startOfToday.toISOString())
-                  .eq('sender', 'CLIENT');
-
-              const activeConvIds = new Set(msgData?.map(m => m.conversation_id) || []);
+              const activeConvIds = new Set(msgData.map((m: any) => m.conversation_id));
               negotiatingToday = (convsData || []).filter(c => {
                   const isCreatedToday = new Date(c.created_at) >= startOfToday;
                   const isMsgToday = activeConvIds.has(c.id);
@@ -211,7 +197,7 @@ export default function Dashboard() {
   const [contractData, setContractData] = useState<any>(null);
 
   const handleGenerateContract = async (res: any) => {
-      const { data: customer } = await supabase.from('customers').select('*').eq('id', res.customer_id).single();
+      const { data: customer } = await adminGet<any>(`/api/admin/customers?id=${res.customer_id}`);
       if (customer) res.customers = customer;
       
       const c = res.customers;
@@ -245,7 +231,7 @@ export default function Dashboard() {
         {loading ? (
              <div className="p-10 flex justify-center text-yellow-500 animate-pulse">Sincronizando radares...</div>
         ) : (
-            <div className="p-6 max-w-7xl mx-auto space-y-6">
+            <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
             
             {/* Métricas do Dia */}
             <section>

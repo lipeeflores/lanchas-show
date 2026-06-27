@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
-import { adminPost, adminPatch, adminDelete, adminPut } from '../../lib/adminApi';
+import { adminGet, adminPost, adminPatch, adminDelete, adminPut } from '../../lib/adminApi';
 import { Anchor, Ship, CalendarCheck, FileText, Banknote, Landmark, CheckCircle, Clock, AlertCircle, Wallet, Users, Bot, Plus, X, Save, Settings, Trash2, MapPin, Upload, Image as ImageIcon, Loader2, Star, Phone, Edit2, UserPlus } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import AdminLayout from '../../components/AdminLayout';
@@ -113,22 +113,14 @@ export default function FleetManagement() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      // Fetch boats + partners + expenses
-      const { data: boatsData } = await supabase
-        .from('boats')
-        .select('*, partners(name, bank_account_info), boat_expenses(*)');
-        
-      if(boatsData) setBoats(boatsData);
-
-      const { data: payablesData } = await supabase
-        .from('accounts_payable')
-        .select('*, partners(name)')
-        .order('created_at', { ascending: false });
-        
-      if(payablesData) setPayables(payablesData);
-
-      const { data: partnersData } = await supabase.from('partners').select('id, name, phone, bank_account_info, management_level').order('name');
-      if (partnersData) setAllPartners(partnersData);
+      const [boatsResult, payablesResult, partnersResult] = await Promise.all([
+        adminGet<any[]>('/api/admin/boats'),
+        adminGet<any[]>('/api/admin/accounts-payable'),
+        adminGet<any[]>('/api/admin/partners'),
+      ]);
+      if (boatsResult.data) setBoats(boatsResult.data);
+      if (payablesResult.data) setPayables(payablesResult.data);
+      if (partnersResult.data) setAllPartners(partnersResult.data);
     } catch (error: any) {
       console.error('Error fetching data:', error.message);
     } finally {
@@ -142,15 +134,9 @@ export default function FleetManagement() {
 
   const fetchContractTemplate = async () => {
     try {
-      const { data, error } = await supabase
-        .from('contratos_template')
-        .select('html_content')
-        .eq('id', 'default')
-        .maybeSingle();
-      if (error) throw error;
-      if (data) {
-        setContractHtml(data.html_content);
-      }
+      const { data, error } = await adminGet<{ html_content: string }>('/api/admin/contratos-template');
+      if (error) throw new Error(error.message);
+      if (data) setContractHtml(data.html_content);
     } catch (err: any) {
       console.error('Error fetching contract template:', err.message);
     }
@@ -200,7 +186,7 @@ export default function FleetManagement() {
         catalogo_url: boat.catalogo_url || ''
       });
       setImageUrls(boat.image_urls || (boat.image ? [boat.image] : []));
-      const { data: routesData } = await supabase.from('boat_routes_pricing').select('*').eq('boat_id', boat.id).order('created_at');
+      const { data: routesData } = await adminGet<any[]>(`/api/admin/boats/${boat.id}/routes`);
       setBoatRoutes(routesData || []);
     } else {
       setEditingBoatId(null);

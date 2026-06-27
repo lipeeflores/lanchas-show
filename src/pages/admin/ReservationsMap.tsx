@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { supabase } from '../../lib/supabase';
-import { adminPost, adminPatch, adminDelete } from '../../lib/adminApi';
+import { adminGet, adminPost, adminPatch, adminDelete } from '../../lib/adminApi';
 import { 
   Anchor, Ship, CalendarCheck, Search, ChevronLeft, ChevronRight, UserPlus, 
   Filter, BellRing, Settings, Landmark, Wallet, Users, Bot, X, Check, 
@@ -64,24 +63,21 @@ export default function ReservationsMap() {
     const fetchBoatsAndReservations = async () => {
       try {
         setLoading(true);
-        const { data: boatsData, error: boatsError } = await supabase
-          .from('boats')
-          .select('*, partners(name, management_level)')
-          .order('owner_type', { ascending: true })
-          .order('created_at', { ascending: true });
-          
-        if (boatsError) throw boatsError;
-
         const endDateRange = new Date(today.getTime());
         endDateRange.setDate(endDateRange.getDate() + 14);
 
-        const { data: resData, error: resError } = await supabase
-          .from('reservations')
-          .select('*, customers(full_name, phone, tags, rating_stars, rating_notes)')
-          .gte('end_date', today.toISOString())
-          .lte('start_date', endDateRange.toISOString());
-        
-        if (resError) throw resError;
+        const [boatsResult, resResult] = await Promise.all([
+          adminGet<any[]>('/api/admin/boats'),
+          adminGet<any[]>('/api/admin/reservations'),
+        ]);
+
+        if (boatsResult.error) throw new Error(boatsResult.error.message);
+        if (resResult.error) throw new Error(resResult.error.message);
+
+        const boatsData = boatsResult.data || [];
+        const resData = (resResult.data || []).filter(
+          (r: any) => new Date(r.end_date) >= today && new Date(r.start_date) <= endDateRange
+        );
 
         const boatsWithRsv = boatsData?.map(b => {
             const boatRes = resData?.filter(r => r.boat_id === b.id) || [];
@@ -116,13 +112,8 @@ export default function ReservationsMap() {
     fetchBoatsAndReservations();
     
     const fetchCustomers = async () => {
-      try {
-        const { data, error } = await supabase.from('customers').select('*').order('full_name');
-        if (error) throw error;
-        setAllCustomers(data || []);
-      } catch (err: any) {
-        console.error('Erro clientes:', err.message);
-      }
+      const { data } = await adminGet<any[]>('/api/admin/customers');
+      if (data) setAllCustomers([...data].sort((a, b) => (a.full_name || '').localeCompare(b.full_name || '')));
     };
     fetchCustomers();
   }, []);
@@ -131,7 +122,7 @@ export default function ReservationsMap() {
   useEffect(() => {
     if (formData.boat_id) {
       const fetchRoutes = async () => {
-        const { data } = await supabase.from('boat_routes_pricing').select('*').eq('boat_id', formData.boat_id);
+        const { data } = await adminGet<any[]>(`/api/admin/boats/${formData.boat_id}/routes`);
         const routes = data || [];
         setAvailableRoutes(routes);
         // We no longer clear embarkation automatically here because the user might have selected a fallback option 

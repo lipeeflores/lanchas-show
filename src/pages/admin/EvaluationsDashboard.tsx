@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { supabase } from '../../lib/supabase';
+import { adminGet, adminDelete } from '../../lib/adminApi';
 import { Link } from 'react-router-dom';
 import { Anchor, Ship, CalendarCheck, Landmark, Wallet, Users, Bot, Settings, Star, Trash2, MessageSquare, ShieldCheck, User, RefreshCw } from 'lucide-react';
 import AdminLayout from '../../components/AdminLayout';
@@ -19,12 +19,9 @@ export default function EvaluationsDashboard() {
 
   const fetchEvaluations = async () => {
     try {
-      const { data, error } = await supabase
-        .from('evaluations')
-        .select('*, boats(name)')
-        .order('created_at', { ascending: false });
+      const { data, error } = await adminGet<any[]>('/api/admin/evaluations');
 
-      if (error) throw error;
+      if (error) throw new Error(error.message);
       if (data) {
         setEvaluations(data);
         
@@ -65,12 +62,9 @@ export default function EvaluationsDashboard() {
     if (!window.confirm('Tem certeza que deseja excluir esta avaliação de forma permanente?')) return;
     
     try {
-      const { error } = await supabase
-        .from('evaluations')
-        .delete()
-        .eq('id', id);
+      const { error } = await adminDelete(`/api/admin/evaluations/${id}`);
 
-      if (error) throw error;
+      if (error) throw new Error(error.message);
       setEvaluations(evaluations.filter(e => e.id !== id));
       
       // Re-trigger stats calculation from updated local array
