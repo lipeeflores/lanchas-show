@@ -14,6 +14,7 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 const app = express();
 const port = process.env.PORT || 3001;
+const BOOT_TIME = new Date().toISOString();
 
 // Capture the raw body for webhook signature verification (DocuSeal HMAC).
 app.use(express.json({
@@ -21,6 +22,11 @@ app.use(express.json({
     req.rawBody = buf;
   }
 }));
+
+// Health check — useful for Railway/Vercel uptime and deployment verification.
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, boot: BOOT_TIME });
+});
 
 // ──────────────────────────────────────────────────────────────────
 // Webhooks (each handler validates its own signature/token).
