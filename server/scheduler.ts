@@ -386,6 +386,74 @@ export async function checkSameDay9AmFollowUps(): Promise<void> {
 }
 
 /**
+ * Sends a warm pre-trip message 2 days before the scheduled trip
+ * to clients who have already confirmed (stage = 'reservado').
+ */
+export async function checkPreTripFollowUps(): Promise<void> {
+  try {
+    const localStr = new Date().toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+    const localDate = localStr.substring(0, 10);
+    const localHour = Number(localStr.substring(11, 13));
+
+    // Only trigger in the 10:00 AM window
+    if (localHour !== 10) return;
+
+    // Calculate the date 2 days from now
+    const twoDaysFromNow = new Date();
+    twoDaysFromNow.setDate(twoDaysFromNow.getDate() + 2);
+    const targetDateStr = twoDaysFromNow.toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' }).substring(0, 10);
+
+    console.log(`[Scheduler] Pre-trip check: looking for reservations on ${targetDateStr}`);
+
+    const { data: conversations, error: convError } = await supabaseAdmin
+      .from('ia_conversations')
+      .select('*')
+      .eq('status', 'AI_CONTROL')
+      .eq('stage', 'reservado')
+      .eq('target_date', targetDateStr);
+
+    if (convError) throw convError;
+    if (!conversations || conversations.length === 0) {
+      console.log('[Scheduler] No pre-trip conversations found for 2 days from now.');
+      return;
+    }
+
+    for (const conv of conversations) {
+      // Check if we already sent a pre-trip message today
+      const { data: todayMsgs } = await supabaseAdmin
+        .from('ia_messages')
+        .select('id')
+        .eq('conversation_id', conv.id)
+        .gte('created_at', `${localDate}T00:00:00Z`)
+        .eq('sender', 'IA')
+        .limit(1);
+
+      if (todayMsgs && todayMsgs.length > 0) continue;
+
+      const { data: fullHistory } = await supabaseAdmin
+        .from('ia_messages')
+        .select('sender, content')
+        .eq('conversation_id', conv.id)
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      const chronological = (fullHistory || []).reverse();
+
+      const text = await generateFollowUpMessage(
+        chronological,
+        'pre_passeio_2d',
+        conv.contact_name,
+        conv.contact_phone,
+        conv.target_date
+      );
+      if (text) await sendFollowUp(conv.id, conv.contact_phone, text);
+    }
+  } catch (error) {
+    console.error('[Scheduler] Error in checkPreTripFollowUps:', error);
+  }
+}
+
+/**
  * Checks if there are active rentals today at 14:00 that have not confirmed boarding yet,
  * and sends a reminder to the owners' group.
  */
@@ -484,6 +552,7 @@ export function startScheduler(): void {
   cron.schedule('*/15 * * * *', async () => {
     await checkFollowUps();
     await checkSameDay9AmFollowUps();
+    await checkPreTripFollowUps();
     await checkBoardingReminder();
     await checkPostTrips();
   });

@@ -1353,7 +1353,195 @@ export type FollowUpKind =
   | 'tier3_sinal'
   | 'pix_4h'             // 4h after PIX was requested, no comprovante
   | 'pix_24h'            // 24h after first PIX nudge, still silent
-  | 'same_day_9am';      // booking is for today, ping at 9 AM
+  | 'same_day_9am'       // booking is for today, ping at 9 AM
+  | 'pre_passeio_2d';    // trip booked, friendly pre-trip contact ~2 days out
+
+interface FollowUpContext {
+  boat_mentioned: string | null;
+  date_display: string | null;
+  occasion: string | null;
+  group_size: string | null;
+  price_quoted: number | null;
+  main_objection: 'preco' | 'data' | 'grupo' | null;
+  client_energy: 'high' | 'medium' | 'low';
+  floating_mat_offered: boolean;
+  days_until_trip: number | null;
+}
+
+function extractConversationContext(
+  history: { sender: string; content: string }[],
+  targetDate?: string | null
+): FollowUpContext {
+  const allText = history.map(m => m.content).join('\n');
+  const iaText = history.filter(m => m.sender === 'IA').map(m => m.content).join('\n');
+  const clientText = history.filter(m => m.sender === 'CLIENT').map(m => m.content).join('\n');
+
+  // Boat name
+  const boatMatch = allText.match(/\b(Tecnomarine\s*\d*|Phantom\s*\d*|Ferretti\s*\d*|Sunseeker\s*\d*)/i);
+  const boat_mentioned = boatMatch ? boatMatch[0].trim() : null;
+
+  // Occasion
+  const occasionMap: [RegExp, string][] = [
+    [/15\s*anos|debutante/i, 'festa de 15 anos'],
+    [/despedida de solteira/i, 'despedida de solteira'],
+    [/casamento|noivado/i, 'casamento'],
+    [/formatura/i, 'formatura'],
+    [/aniversário/i, 'aniversário'],
+    [/corporativ|confraternização|empresa/i, 'evento corporativo'],
+  ];
+  let occasion: string | null = null;
+  for (const [re, label] of occasionMap) {
+    if (re.test(allText)) { occasion = label; break; }
+  }
+
+  // Group size
+  const groupMatch = allText.match(/(\d+)\s*(?:pessoas|passageiros|adultos|convidados)/i);
+  const group_size = groupMatch ? `${groupMatch[1]} pessoas` : null;
+
+  // Price quoted (last price mentioned by IA)
+  const priceMatches = iaText.match(/R\$\s*[\d.,]+/g) || [];
+  let price_quoted: number | null = null;
+  for (const p of priceMatches.reverse()) {
+    const num = parseFloat(p.replace(/R\$\s*/, '').replace(/\./g, '').replace(',', '.'));
+    if (!isNaN(num) && num > 500) { price_quoted = num; break; }
+  }
+
+  // Main objection
+  let main_objection: 'preco' | 'data' | 'grupo' | null = null;
+  if (/caro|valor alto|muito|desconto|barato|orçamento/i.test(clientText)) main_objection = 'preco';
+  else if (/data|dia|agenda|disponível|outra data/i.test(clientText)) main_objection = 'data';
+  else if (/grupo|galera|pessoal|amigos|família|alinhando/i.test(clientText)) main_objection = 'grupo';
+
+  // Client energy
+  const clientMsgs = history.filter(m => m.sender === 'CLIENT');
+  const avgLen = clientMsgs.length > 0
+    ? clientMsgs.reduce((s, m) => s + m.content.length, 0) / clientMsgs.length : 0;
+  const hasExcitement = /!{2,}|adorei|amo|perfeito|incrível|excelente|quero muito|amei/i.test(clientText);
+  const client_energy: 'high' | 'medium' | 'low' =
+    (hasExcitement || avgLen > 100) ? 'high' : avgLen > 40 ? 'medium' : 'low';
+
+  // Floating mat
+  const floating_mat_offered = /tapete/i.test(iaText);
+
+  // Days until trip + display
+  let days_until_trip: number | null = null;
+  let date_display: string | null = null;
+  if (targetDate) {
+    const today = new Date();
+    const tripDate = new Date(targetDate + 'T12:00:00-03:00');
+    days_until_trip = Math.ceil((tripDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    const dayNames = ['domingo','segunda','terça','quarta','quinta','sexta','sábado'];
+    const monthNames = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+    date_display = `${tripDate.getDate()} de ${monthNames[tripDate.getMonth()]} (${dayNames[tripDate.getDay()]})`;
+  }
+
+  return { boat_mentioned, date_display, occasion, group_size, price_quoted, main_objection, client_energy, floating_mat_offered, days_until_trip };
+}
+
+function getFollowUpBrief(kind: FollowUpKind, ctx: FollowUpContext): string {
+  const dateRef = ctx.date_display ? `a data de ${ctx.date_display}` : 'a data de interesse';
+  const boatRef = ctx.boat_mentioned ? `a ${ctx.boat_mentioned}` : 'a lancha';
+  const occasionSuffix = ctx.occasion ? ` (${ctx.occasion})` : '';
+  const priceRef = ctx.price_quoted
+    ? `R$ ${ctx.price_quoted.toLocaleString('pt-BR')}`
+    : 'o valor cotado';
+  const groupRef = ctx.group_size ? `o grupo de ${ctx.group_size}` : 'o grupo';
+
+  const objHint =
+    ctx.main_objection === 'preco'
+      ? 'Cliente mostrou sensibilidade ao preço — NÃO ofereça desconto, reframe o valor ou ofereça tapete como cortesia (se frota própria e não ofereceu ainda).'
+      : ctx.main_objection === 'grupo'
+      ? 'Cliente estava alinhando com o grupo — pergunte se conseguiram definir.'
+      : ctx.main_objection === 'data'
+      ? 'Cliente estava avaliando a data — reforce a disponibilidade ou ofereça alternativa.'
+      : 'Sem objeção clara — abordagem neutra e calorosa.';
+
+  const energyHint =
+    ctx.client_energy === 'high'
+      ? 'Cliente demonstrou entusiasmo — combine essa energia.'
+      : ctx.client_energy === 'low'
+      ? 'Cliente foi lacônico — seja ainda mais curta e direta.'
+      : '';
+
+  const briefs: Record<FollowUpKind, string> = {
+    tier1_geral: `SITUAÇÃO: Cotou/respondeu, cliente sumiu por ~30 min. PRIMEIRO toque.
+OBJETIVO: Reabrir canal de forma natural — curiosidade, sem cobrar decisão.
+CONTEXTO OBRIGATÓRIO A USAR:
+- Data: ${dateRef}${occasionSuffix}
+- Barco: ${boatRef}
+- Grupo: ${groupRef}
+- ${objHint}
+- ${energyHint}
+REGRA: Mencione 1 detalhe específico (data, ocasião ou barco) — mostra que lembrou da conversa.
+MENSAGEM: 1-2 linhas. Casual, ZERO urgência. Proibido "Passando para saber".`,
+
+    tier2_geral: `SITUAÇÃO: Primeiro toque sem resposta. ~3h. SEGUNDO toque.
+OBJETIVO: Criar movimento — ${dateRef} tem vida.
+CONTEXTO OBRIGATÓRIO A USAR:
+- Data: ${dateRef}${occasionSuffix}
+- Barco: ${boatRef}
+- Valor: ${priceRef}
+- Tapete já oferecido: ${ctx.floating_mat_offered ? 'SIM — não ofereça de novo' : 'NÃO — pode usar como diferencial se frota própria'}
+- ${objHint}
+TÉCNICA: Loss aversion leve + saída alternativa (mudar data, barco ou dividir grupo).
+MENSAGEM: 2-3 linhas. Prestativo, não desesperado.`,
+
+    tier3_geral: `SITUAÇÃO: 18h+ de silêncio após dois toques. ÚLTIMO contato.
+OBJETIVO: Prazo real e concreto. Fechar ou liberar ${dateRef}.
+CONTEXTO OBRIGATÓRIO A USAR:
+- Data: ${dateRef}${occasionSuffix}
+- Barco: ${boatRef}
+- Valor: ${priceRef}
+- ${objHint}
+TÉCNICA: Assumptive close + escassez honesta. Diga que precisa liberar a data.${!ctx.floating_mat_offered ? ' Tapete flutuante como último incentivo (se frota própria).' : ''}
+Encerre com porta de saída digna.
+MENSAGEM: 2 linhas. Firme, caloroso, definitivo.`,
+
+    tier1_sinal: `SITUAÇÃO: Resumo + PIX enviados, comprovante não chegou em ~30 min. PRIMEIRO lembrete.
+OBJETIVO: Checar dificuldade técnica, não cobrar.
+CONTEXTO: ${ctx.occasion ? ctx.occasion + ', ' : ''}${dateRef}, ${groupRef}.
+TÉCNICA: Empatia + ajuda prática. Reconfirme chave: CNPJ 39.350.999/0001-34 (Lanchas Show / Flavieli).
+MENSAGEM: 1 frase. Levíssimo.`,
+
+    tier2_sinal: `SITUAÇÃO: Ainda sem comprovante ~3h depois. SEGUNDO lembrete.
+OBJETIVO: Urgência real — ${dateRef} em risco.
+CONTEXTO: ${ctx.occasion ? `É ${ctx.occasion} — tem valor emocional alto. ` : ''}Valor: ${priceRef}.
+TÉCNICA: Loss aversion direto + saída (pode remarcar se precisar).
+MENSAGEM: 2 linhas. Gentil com prazo real.`,
+
+    tier3_sinal: `SITUAÇÃO: 18h+ sem comprovante após dois lembretes. ÚLTIMO aviso.
+OBJETIVO: Resolver agora ou liberar definitivamente.
+CONTEXTO: ${dateRef}${occasionSuffix}, ${groupRef}.
+TÉCNICA: Clareza total. Manda o comprovante AGORA ou informa que o plano mudou.
+MENSAGEM: 1-2 frases. Definitivo, sem hostilidade.`,
+
+    pix_4h: `SITUAÇÃO: Cliente disse que ia pagar, comprovante não chegou em 4h.
+OBJETIVO: Checar erro técnico, não cobrar.
+CONTEXTO: ${dateRef}${occasionSuffix}.
+TÉCNICA: Curiosidade genuína. Reconfirme: CNPJ 39.350.999/0001-34 (Lanchas Show / Flavieli).
+MENSAGEM: 1 linha. Tom de quem quer ajudar.`,
+
+    pix_24h: `SITUAÇÃO: 24h depois + primeiro lembrete, sem comprovante.
+OBJETIVO: Prazo hoje ou remarcação sem drama.
+CONTEXTO: ${dateRef}${occasionSuffix}. Valor: ${priceRef}.
+TÉCNICA: Prazo concreto + alternativa direta.
+MENSAGEM: 2 linhas. Simples, direto.`,
+
+    same_day_9am: `SITUAÇÃO: Passeio é HOJE (${ctx.date_display || 'hoje'}). Saída às 10h. Negociação aberta.
+OBJETIVO: Converter AGORA com urgência real do dia.
+CONTEXTO: ${boatRef}${occasionSuffix}, ${groupRef}. Valor: ${priceRef}.
+TÉCNICA: Scarcity real (são 9h, saída às 10h) + assumptive close. Energia ALTA.
+MENSAGEM: 1-2 linhas. Animada, urgente, direta.`,
+
+    pre_passeio_2d: `SITUAÇÃO: Passeio confirmado e reservado para ${ctx.date_display || 'daqui 2 dias'}. Contato amigável pré-passeio.
+OBJETIVO: Animar, confirmar e passar informações práticas essenciais.
+CONTEXTO: ${boatRef}${occasionSuffix}, ${groupRef}. Embarque: Rei do Porto — Píer do João (Av. Gov. Celso Ramos, 3371 — Porto Belo). Saída às 10h.
+TÉCNICA: Tom animado e acolhedor. Dicas práticas: levar comida, bebida, protetor solar, documentos. Reforce o ponto de embarque.
+MENSAGEM: 2-3 linhas. Calorosa, animada, prática. Pode usar 1-2 emojis.`,
+  };
+
+  return briefs[kind];
+}
 
 /**
  * Generates a unique, contextual follow-up message by calling Claude with the
@@ -1380,103 +1568,54 @@ export async function generateFollowUpMessage(
     currentHour >= 12 && currentHour < 18 ? 'Boa tarde' :
     'Boa noite';
 
-  // Last 5 IA phrases to actively avoid repeating
+  // Extract structured context from conversation
+  const ctx = extractConversationContext(history, targetDate);
+
+  // Last 10 IA phrases — anti-repetition
   const recentIaPhrases = history
     .filter(m => m.sender === 'IA')
-    .slice(-5)
-    .map(m => (m.content || '').slice(0, 140))
+    .slice(-10)
+    .map(m => (m.content || '').slice(0, 200))
     .filter(Boolean);
 
   const antiRepeatBlock = recentIaPhrases.length
-    ? `\n\nSUAS ÚLTIMAS MENSAGENS NESTA CONVERSA — NÃO REPITA O INÍCIO NEM A ESTRUTURA, VARIE TUDO:\n${recentIaPhrases.map((p, i) => `${i + 1}. "${p}${p.length >= 140 ? '...' : ''}"`).join('\n')}`
+    ? `\n\nSUAS ÚLTIMAS MENSAGENS NESTA CONVERSA (NÃO repita inícios, estruturas, ângulos ou tópicos — varie completamente):\n${recentIaPhrases.map((p, i) => `${i + 1}. "${p}${p.length >= 200 ? '...' : ''}"`).join('\n')}`
     : '';
 
-  // Instruction map — each kind has its own private brief.
-  const kindBriefs: Record<FollowUpKind, string> = {
-    tier1_geral: `SITUAÇÃO: Você cotou/respondeu e o cliente ficou em silêncio por ~30 min. É o PRIMEIRO toque.
-OBJETIVO: Reabrir o canal de forma natural e curiosa, sem qualquer pressão.
-TÉCNICA: Use Label de emoção ou pergunta calibrada curta. Exemplos de abordagem (NÃO copie literalmente, adapte ao tom da conversa):
-  - "sei que às vezes a gente precisa de um minutinho pra alinhar com o grupo..."
-  - "ficou alguma coisa sem resposta?"
-  - Se souber a data de interesse pelo histórico, pode citar levemente: "aquela data de [data] ainda tá disponível aqui".
-MENSAGEM: 1 a 2 linhas. Casual, sem cobrar decisão. ZERO urgência.`,
-
-    tier2_geral: `SITUAÇÃO: Primeiro follow-up sem resposta. Já ~3h desde o último contato da IA. SEGUNDO toque.
-OBJETIVO: Criar movimento — mostrar que a data tem vida, sem inventar escassez falsa.
-TÉCNICA: Loss aversion leve + pergunta calibrada que abre saída alternativa.
-  - Se souber pelo histórico o barco/data de interesse, mencione: "a [barco] nessa data começa a ter movimentação..."
-  - Abra alternativa: "se preferirem ajustar alguma coisa — grupo, data, barco — me fala que vejo aqui."
-  - Pode oferecer canal alternativo: "se for mais fácil resolver por ligação rápida, me fala também."
-MENSAGEM: 2 a 3 linhas. Tom prestativo, não desesperado.`,
-
-    tier3_geral: `SITUAÇÃO: Cliente sumiu depois de dois follow-ups, mais de 18h de silêncio. ÚLTIMO contato.
-OBJETIVO: Criar prazo real e concreto. Saída honrosa ou fechamento.
-TÉCNICA: Assumptive close + escassez honesta. Exemplos de estrutura:
-  - "Vou precisar liberar essa data nos próximos dias — tenho outros grupos aguardando. Se ainda quiser garantir, me avisa até hoje."
-  - Se pelo histórico a lancha for frota própria e tapete disponível: ofereça tapete flutuante cortesia como isca final.
-  - Encerre com porta de saída digna: "se o plano mudou, sem problema — é só me falar 🙏"
-MENSAGEM: 2 linhas. TOM: firme, caloroso, definitivo. Soa como "última chance real", não ameaça.`,
-
-    tier1_sinal: `SITUAÇÃO: Cliente recebeu o resumo + chave PIX mas não mandou comprovante (~30 min). PRIMEIRO lembrete.
-OBJETIVO: Checar se houve dificuldade prática com o PIX, sem soar cobrando.
-TÉCNICA: Empatia + oferta de ajuda prática.
-  - "O PIX foi pra você certinho? Às vezes o CNPJ demora um tempinho pra processar nos apps."
-  - Pode reconfirmar a chave: "o PIX é pro CNPJ 39.350.999/0001-34 (Lanchas Show / Flavieli)."
-MENSAGEM: 1 frase. Levíssimo, prestativo.`,
-
-    tier2_sinal: `SITUAÇÃO: Ainda sem comprovante ~3h depois do primeiro lembrete de PIX. SEGUNDO lembrete.
-OBJETIVO: Urgência REAL e honesta sobre a data. Criar prazo concreto.
-TÉCNICA: Loss aversion direto + saída alternativa.
-  - "A data ainda está reservada pra você, mas precisaria confirmar até hoje — já tenho outro grupo esperando essa mesma data."
-  - Abra saída: "se precisar remarcar ou ajustar alguma coisa, me fala antes que a gente resolve."
-MENSAGEM: 2 linhas. Gentil com prazo real.`,
-
-    tier3_sinal: `SITUAÇÃO: Mais de 18h sem comprovante depois de dois lembretes. ÚLTIMO aviso antes de liberar a data.
-OBJETIVO: Resolver ou liberar a data — sem mais ambiguidade.
-TÉCNICA: Clareza total + porta de saída digna.
-  - "Preciso de uma confirmação ainda hoje ou vou precisar liberar essa data — não quero te perder mas já não consigo segurar mais."
-  - "Se ainda quiser, manda o comprovante agora. Se o plano mudou, me fala que não tem problema nenhum 🙏"
-MENSAGEM: 1 a 2 frases. TOM: definitivo mas sem hostilidade. É o encerramento.`,
-
-    pix_4h: `SITUAÇÃO: O cliente disse que ia pagar o PIX mas comprovante não chegou em 4h.
-OBJETIVO: Checar sem soar cobrando — pode ter sido erro técnico.
-TÉCNICA: Curiosidade genuína + oferta de ajuda prática.
-  - "Oi! Só pra confirmar — o PIX chegou a ser feito? Às vezes tranca no app ou dá erro no CNPJ."
-  - Se conveniente, confirme a chave: "o PIX é pro CNPJ 39.350.999/0001-34 (Lanchas Show / Flavieli)."
-MENSAGEM: 1 linha. Tom de quem quer ajudar, não cobrar.`,
-
-    pix_24h: `SITUAÇÃO: 24h depois da solicitação + primeiro lembrete, ainda sem comprovante.
-OBJETIVO: Prazo concreto hoje ou abertura para remarcação.
-TÉCNICA: Prazo + alternativa direta.
-  - "Ainda dá tempo de garantir a data, mas precisaria da confirmação hoje. Se o plano mudou por algum motivo, me fala que a gente vê outra data sem problema 😊."
-MENSAGEM: 2 linhas. Simples, direto, sem drama.`,
-
-    same_day_9am: `SITUAÇÃO: O passeio do cliente é HOJE (${targetDate || 'hoje'}) mas ainda não fechou/confirmou.
-OBJETIVO: Converter com urgência real do dia. Energia alta.
-TÉCNICA: Scarcity real (saída é às 10h, o tempo é agora) + assumptive close.
-  - Se for negociação em andamento: "Bom dia! A saída é às 10h — ainda dá tempo de garantir pra hoje! 🛥️ Me confirma agora?"
-  - Se a situação for mais avançada (tinha pedido PIX): "Bom dia! Tô confirmando a saída de hoje — deu pra fazer o sinal?"
-MENSAGEM: 1 a 2 linhas. Animada, urgente, direta.`
+  // Temperature map per kind
+  const tempMap: Record<FollowUpKind, number> = {
+    tier1_geral: 0.85,
+    tier2_geral: 0.80,
+    tier3_geral: 0.70,
+    tier1_sinal: 0.80,
+    tier2_sinal: 0.75,
+    tier3_sinal: 0.65,
+    pix_4h: 0.65,
+    pix_24h: 0.65,
+    same_day_9am: 0.90,
+    pre_passeio_2d: 0.88,
   };
+
+  const brief = getFollowUpBrief(kind, ctx);
 
   const followUpInstruction = `# INSTRUÇÃO INTERNA DO SISTEMA (CLIENTE NÃO VÊ ISTO)
 
-Gere AGORA uma única mensagem de follow-up para enviar ao cliente. NÃO é resposta a algo que ele disse — é você quem está iniciando contato porque ele ficou em silêncio.
+Gere AGORA uma única mensagem de follow-up para enviar ao cliente. NÃO é resposta a algo que ele disse — você está iniciando contato porque ele ficou em silêncio.
 
 BRIEFING:
-${kindBriefs[kind]}
+${brief}
 
-REGRAS DA MENSAGEM:
+REGRAS ABSOLUTAS DA MENSAGEM:
 - UMA mensagem só (sem parágrafos longos). Estilo WhatsApp natural.
-- Use a saudação adequada à hora atual SE fizer sentido começar com saudação ("${greetingNow}", agora são ${currentTime}). Se a conversa já tá quente e vocês trocaram mensagens recentemente, vai direto sem cumprimento.
-- Mencione o nome do cliente se soar natural (cliente se chama: ${clientName || 'desconhecido'}).
-- NÃO use frases que já estão no seu histórico recente (veja abaixo). VARIE COMPLETAMENTE.
-- NÃO use templates engessados ("Passando para saber..."). Soa como um humano de verdade puxando assunto.
+- Use a saudação "${greetingNow}" SÓ se fizer sentido — se já conversaram hoje, vai direto sem cumprimento.
+- Mencione o nome "${clientName || 'cliente'}" se soar natural.
+- NÃO use frases do seu histórico recente (listadas abaixo). VARIE completamente — ângulo, abertura, tom.
+- NÃO use templates como "Passando para saber", "Oi, tudo bem?", "Só passando para ver".
 - Curto: 1 a 3 linhas. Pode usar 1 emoji se ficar natural.
-- Não revele que é follow-up automático.
-- Não chame nenhuma ferramenta. Só escreva a mensagem.${antiRepeatBlock}
+- Não revele que é mensagem automática.
+- Não chame nenhuma ferramenta — só escreva a mensagem.${antiRepeatBlock}
 
-Responda APENAS com o texto da mensagem que deve ir pro cliente, sem explicação, sem aspas, sem prefixo.`;
+Responda APENAS com o texto da mensagem. Sem explicação, sem aspas, sem prefixo.`;
 
   // Build messages — replay history then append the internal instruction.
   const messages: ChatMessage[] = [];
@@ -1508,7 +1647,9 @@ Responda APENAS com o texto da mensagem que deve ir pro cliente, sem explicaçã
 - Data de hoje: ${currentDate}
 - Hora atual em SC: ${currentTime}
 - Cliente: ${clientName || 'Não identificado'} (${clientPhone || 'sem telefone'})
-- Data de interesse do cliente: ${targetDate || 'não definida'}`;
+- Data de interesse do cliente: ${ctx.date_display || targetDate || 'não definida'}
+- Barco mencionado: ${ctx.boat_mentioned || 'não identificado'}
+- Ocasião: ${ctx.occasion || 'não identificada'}`;
 
   try {
     const response = await anthropic.messages.create({
@@ -1516,7 +1657,7 @@ Responda APENAS com o texto da mensagem que deve ir pro cliente, sem explicaçã
       max_tokens: 500,
       system: followupSystemPrompt,
       messages,
-      temperature: 0.95 // higher variation for follow-ups
+      temperature: tempMap[kind] ?? 0.80
     });
     const textBlock = response.content.find((block: any) => block.type === 'text') as any;
     return (textBlock?.text || '').trim();
